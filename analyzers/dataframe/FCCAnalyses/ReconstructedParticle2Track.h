@@ -169,7 +169,21 @@ namespace ReconstructedParticle2Track{
 
   /// Return if a Reco particle have an associated track
   ROOT::VecOps::RVec<bool> hasTRK( ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> in ) ;
-
+  
+  ROOT::VecOps::RVec<float> make_track_pt_proxy(
+    const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& rps,
+    const ROOT::VecOps::RVec<int>& rp_trk_index // _ReconstructedParticles_tracks.index
+  );
+  int count_tau_tracks_cone_DRpt(
+    const edm4hep::ReconstructedParticleData& tau,
+    const ROOT::VecOps::RVec<int>& trk_states_begin,
+    const ROOT::VecOps::RVec<int>& trk_states_end,
+    const ROOT::VecOps::RVec<edm4hep::TrackState>& tstates,
+    const ROOT::VecOps::RVec<float>& track_pt_proxy,  // from make_track_pt_proxy
+    double dR_max,
+    double pt_min
+  );
+  
 }//end NS ReconstructedParticle2Track
 
 }//end NS FCCAnalyses

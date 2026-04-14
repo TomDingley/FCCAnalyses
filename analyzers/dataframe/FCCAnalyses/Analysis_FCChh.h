@@ -485,6 +485,315 @@ ROOT::VecOps::RVec<T> get(const ROOT::VecOps::RVec<int> &index,
   return result;
 }
 
+/* functions for the HHH analysis*/
+
+ROOT::VecOps::RVec<float> compute_sigma(
+  TLorentzVector higgs_1,
+  TLorentzVector higgs_2,
+  TLorentzVector higgs_3
+);
+
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> find_reco_matches_unique(
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_parts,
+    const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& reco_particles,
+    float dR_thres
+);
+
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> get_btagged_not_tau_tagged(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& jets,
+  // b/HF tags
+  const ROOT::VecOps::RVec<edm4hep::ParticleIDData>&  jets_HF_tags,
+  const ROOT::VecOps::RVec<podio::ObjectID>&          jets_HF_tags_indices,
+  const ROOT::VecOps::RVec<float>&                    jets_HF_tag_values,
+  // tau tags
+  const ROOT::VecOps::RVec<edm4hep::ParticleIDData>&  jets_tau_tags,
+  const ROOT::VecOps::RVec<podio::ObjectID>&          jets_tau_tags_indices,
+  const ROOT::VecOps::RVec<float>&                    jets_tau_tag_values,
+  int btagIndex,   // bit for the chosen b WP, e.g. 1 for "medium"
+  int tauIndex     // bit for the chosen tau WP, e.g. 1 for "medium"
+);
+
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> sel_by_iso_fail(
+    const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& parts,
+    const ROOT::VecOps::RVec<float>& isoVar,
+    float thr
+);
+
+ROOT::VecOps::RVec<edm4hep::MCParticleData> getTruthTauLeps(
+    ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles,
+    ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
+    ROOT::VecOps::RVec<podio::ObjectID> parent_ids, TString type
+);
+
+ROOT::VecOps::RVec<edm4hep::MCParticleData> getTruthTauEmu(
+    ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles,
+    ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
+    ROOT::VecOps::RVec<podio::ObjectID> parent_ids, TString type
+);
+
+std::tuple<
+  ROOT::VecOps::RVec<TLorentzVector>,  // p_vis
+  ROOT::VecOps::RVec<TLorentzVector>,  // p_mis
+  ROOT::VecOps::RVec<int>,             // n_charged
+  ROOT::VecOps::RVec<int>,             // n_neutral
+  ROOT::VecOps::RVec<float>,            // m_vis
+  ROOT::VecOps::RVec<float>,            // m_mis
+  ROOT::VecOps::RVec<int>               // n_neutrinos
+> getTruthTauHadronic(
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_particles,
+    const ROOT::VecOps::RVec<podio::ObjectID>& daughter_ids,
+    const ROOT::VecOps::RVec<podio::ObjectID>& parent_ids,
+    TString type
+);
+
+// for isolation
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> select_with_mask(
+    const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& objs,
+    const ROOT::VecOps::RVec<char>& mask
+);
+
+std::pair<
+  ROOT::VecOps::RVec<edm4hep::MCParticleData>,
+  ROOT::VecOps::RVec<std::pair<edm4hep::MCParticleData, edm4hep::MCParticleData>>
+> get_truth_Higgs(
+    ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles,
+    ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
+    TString decay
+);
+
+ROOT::VecOps::RVec<edm4hep::MCParticleData> SortMCByPt(
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData>& in
+);
+
+ROOT::VecOps::RVec<edm4hep::MCParticleData> getBhadron_final_fromH(
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_particles,
+    const ROOT::VecOps::RVec<podio::ObjectID>& parent_ids,
+    const ROOT::VecOps::RVec<podio::ObjectID>& daughter_ids,
+    float ptMin
+); 
+
+bool isSignalContaminated(
+  ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_b_hadrons,
+  ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_taus,
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> selected_jets,
+  float dR_truth
+);
+
+std::tuple<
+  ROOT::VecOps::RVec<edm4hep::MCParticleData>,  // p_vis
+  ROOT::VecOps::RVec<edm4hep::MCParticleData> // p_mis
+> visible_tauhad(
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_particles,
+    const ROOT::VecOps::RVec<podio::ObjectID>&         daughter_ids,
+    const ROOT::VecOps::RVec<podio::ObjectID>&         parent_ids,
+    TString type
+);
+
+float min_dr_signal(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& target_obj,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& dR1_obj,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& dR2_obj
+);
+
+int checkWDecay_HHH(
+    edm4hep::MCParticleData truth_W,
+    ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
+    ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles
+);
+
+int WWlvlvFilter_HHH(
+    ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles,
+    ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
+    ROOT::VecOps::RVec<podio::ObjectID> parent_ids
+);
+
+std::array<AnalysisFCChh::TauAngleRecord, 2> matchTwoTruthTwoRecoAndAngles(
+    const TLorentzVector& pvis_truth_0,
+    const TLorentzVector& pmiss_truth_0,
+    int nprongs_truth_0,
+    const TLorentzVector& pvis_truth_1,
+    const TLorentzVector& pmiss_truth_1,
+    int nprongs_truth_1,
+    const TLorentzVector& reco0,
+    const TLorentzVector& reco1,
+    float drCut
+);
+
+// function to compute the perpendicular and parallel components of the MET
+ROOT::VecOps::RVec<float> get_perp_para_metres(
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> jets,
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> MET_obj
+);
+
+// struct declaration for storing Higgs-pair information.
+struct HiggsCandidateResult {
+    ROOT::VecOps::RVec<RecoParticlePair> pairs;
+    ROOT::VecOps::RVec<int> used_bjet_indices; // indices into input bjets
+};
+
+HiggsCandidateResult getHiggsCandidates(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& bjets,
+  TString strategy,
+  float target_mass1,
+  float target_mass2
+);
+
+ROOT::VecOps::RVec<TLorentzVector> get_Htautau_vis_exclusive_TLVs(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& tauJets,
+  int n_tau,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& electrons,
+  int n_el,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& muons,
+  int n_mu
+);
+
+std::tuple<
+  edm4hep::ReconstructedParticleData, // lead constituent
+  edm4hep::ReconstructedParticleData, // sublead constituent
+  TLorentzVector,                      // visible H→tautau
+  bool, // return if tau1 is a lepton or not
+  bool // return if tau2 is a lepton or not
+> get_Htautau_vis_exclusive_recoTLV(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& tauJets,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& electrons,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& muons
+);
+
+
+float mT_tautau(
+  const TLorentzVector& tau1_vis,
+  const TLorentzVector& tau2_vis,
+  float MET_x,
+  float MET_y
+);
+
+float ditau_mass_collinear(
+    const TLorentzVector& vis1,
+    const TLorentzVector& vis2,
+    double METx, double METy
+);
+
+float thrust(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& bjets,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& tau_cands
+);
+
+float sphericity(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& bjets,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& tau_cands
+);
+
+float aplanarity(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& bjets,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& tau_cands
+);
+
+ROOT::VecOps::RVec<edm4hep::MCParticleData> getTruthZtautau(
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData> &truth_particles,
+    const ROOT::VecOps::RVec<podio::ObjectID> &daughter_ids
+);
+
+float mTb_min(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& bjets,
+  const edm4hep::ReconstructedParticleData& met 
+);
+
+float xwt(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& bjets,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& taujets,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& untaggedjets,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& electrons,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& muons,
+  float met_px, float met_py
+);
+
+float RMS_mjj(
+    const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& bjets
+);
+
+float RMS_deta(
+    const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& bjets
+);
+
+float RMS_dR(
+    const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& bjets
+);
+
+int find_hhh_signal_match(
+  const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_B_fromH,
+  const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_tauhad_vis_fromH,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& reco_tau_jets,
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& reco_b_jets,
+  float dR_thres
+);
+
+using MMCSolutionsAndWeights = std::pair<
+std::vector<std::pair<float,float>>,
+std::vector<std::array<float,8>>
+>;
+
+
+static std::vector<std::pair<float,float>> solve_ditau_MMC_METScan_para_perp_vispTAngleCalibration(
+  TLorentzVector tau1,
+  TLorentzVector tau2,
+  bool isLep1,
+  bool isLep2,
+  int n_charged_tracks_1,
+  int n_charged_tracks_2,
+  float MET_x,
+  float MET_y,
+  int nsteps,
+  float metres_x,
+  float metres_y,
+  int nMETsig,
+  int nMETsteps,
+  int nMass_steps,
+  int n_b_jets_medium,
+  int n_tau_jets_medium,
+  std::vector<std::array<float,8>>* weight_components,
+  bool diagnostic,
+  int diag_topN,
+  bool use_atlas_tf1
+);
+
+MMCSolutionsAndWeights solve_ditau_MMC_METScan_para_perp_vispTanglecalibration_weights(
+  TLorentzVector tau1,
+  TLorentzVector tau2,
+  bool isLep1,
+  bool isLep2,
+  int n_charged_tracks_1,
+  int n_charged_tracks_2,
+  float MET_x,
+  float MET_y,
+  int nsteps,
+  float metres_x,
+  float metres_y,
+  int nMETsig,
+  int nMETsteps,
+  int nMass_steps,
+  int n_b_jets_medium,
+  int n_tau_jets_medium,
+  bool diagnostic,
+  int diag_topN
+);
+
+
+std::vector<std::pair<float,float>> reweight_mditau_components(
+  const std::vector<std::array<float,8>>& components,
+  bool use_met,
+  bool use_theta,
+  bool use_ratio,
+  bool use_miss
+);
+
+double weighted_mode_from_mw(
+    const std::vector<std::pair<float,float>>& mw_log, // {mass, log_weight}
+    int nbins, double xmin, double xmax,
+    bool refine_peak,
+    bool toWeight     
+);
+
 } // namespace AnalysisFCChh
+
 
 #endif

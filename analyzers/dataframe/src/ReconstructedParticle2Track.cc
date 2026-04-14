@@ -557,6 +557,71 @@ hasTRK( ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> in ) {
  return result ;
 }
 
+ROOT::VecOps::RVec<float> make_track_pt_proxy(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& rps,
+  const ROOT::VecOps::RVec<int>& rp_trk_index // _ReconstructedParticles_tracks.index
+){
+  ROOT::VecOps::RVec<float> trk_pt;
+  
+  // Find max track index to size the vector
+  int maxIdx = -1;
+  for (int v : rp_trk_index) if (v > maxIdx) maxIdx = v;
+  trk_pt.assign(maxIdx+1, 0.0f);
+
+  for (size_t rp_i = 0; rp_i < rps.size(); ++rp_i) {
+    const auto& p = rps[rp_i];
+    if (p.charge == 0) continue;  // want charged particles
+    int b = p.tracks_begin, e = p.tracks_end;
+    
+    if (!(b >= 0 && e >= b && e <= (int)rp_trk_index.size())) continue;
+
+    float pt = std::sqrt(p.momentum.x*p.momentum.x + p.momentum.y*p.momentum.y);
+    for (int k = b; k < e; ++k) {
+      int trk = rp_trk_index[k];
+      if (trk >= 0 && trk < (int)trk_pt.size())
+        if (pt > trk_pt[trk]) trk_pt[trk] = pt;
+    }
+  }
+  return trk_pt;
+}
+int count_tau_tracks_cone_DRpt(
+  const edm4hep::ReconstructedParticleData& tau,
+  const ROOT::VecOps::RVec<int>& trk_states_begin,
+  const ROOT::VecOps::RVec<int>& trk_states_end,
+  const ROOT::VecOps::RVec<edm4hep::TrackState>& tstates,
+  const ROOT::VecOps::RVec<float>& track_pt_proxy,  // from make_track_pt_proxy
+  double dR_max = 0.2,
+  double pt_min = 0.5
+) {
+  auto tau_pt  = std::sqrt(tau.momentum.x*tau.momentum.x + tau.momentum.y*tau.momentum.y);
+  auto tau_eta = (tau_pt == 0.0) ? 0.0 : std::asinh(tau.momentum.z / tau_pt);
+  auto tau_phi = std::atan2(tau.momentum.y, tau.momentum.x);
+  auto deltaR = [](double e1,double p1,double e2,double p2){
+    double dphi = std::fabs(p1 - p2); if (dphi > M_PI) dphi = 2*M_PI - dphi;
+    double de = e1 - e2; return std::sqrt(de*de + dphi*dphi);
+  };
+
+  int n = 0;
+  // start looping over tracks in the event
+  const int nTracks = (int)trk_states_begin.size();
+  for (int t = 0; t < nTracks; ++t) {
+    // define beginning and end of the states
+    int sb = trk_states_begin[t], se = trk_states_end[t]; // beginning and end of track states
+
+    // if we have a track that is less than a certain pt, don't consider it for tau-matching
+    if (t >= (int)track_pt_proxy.size() || track_pt_proxy[t] <= pt_min) continue;
+
+
+    const auto& ts = tstates[sb];
+    // calculate eta from the track parameters
+    double eta = std::asinh(ts.tanLambda), phi = ts.phi;
+    // so this should now consider a track matched if it's above pt_min and within dR_max of the tau jet axos.
+    if (deltaR(eta, phi, tau_eta, tau_phi) < dR_max) ++n;
+  }
+  return n;
+}
+
+
 }//end NS ReconstructedParticle2Track
 
 }//end NS FCCAnalyses
