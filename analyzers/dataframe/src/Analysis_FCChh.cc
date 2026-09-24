@@ -2497,6 +2497,10 @@ ROOT::VecOps::RVec<edm4hep::MCParticleData> AnalysisFCChh::getTruthTau(
                                   // truth_particles) ) {
         continue;
       }
+      if (type.Contains("from_Z") &&
+          !hasZParent(truth_part, parent_ids, truth_particles)) {
+        continue;
+      }
       // select both from higgs or from hadrons
       if (type.Contains("higgshad") &&
           !isFromHiggsDirect(truth_part, parent_ids, truth_particles) &&
@@ -2540,6 +2544,10 @@ ROOT::VecOps::RVec<edm4hep::MCParticleData> AnalysisFCChh::getTruthTauLeps(
               truth_part, parent_ids,
               truth_particles)) { //&& isFromHadron(truth_part, parent_ids,
                                   // truth_particles) ) {
+        continue;
+      }
+      if (type.Contains("from_Z") &&
+          !hasZParent(truth_part, parent_ids, truth_particles)) {
         continue;
       }
       // select both from higgs or from hadrons
@@ -3589,7 +3597,7 @@ ROOT::VecOps::RVec<float> AnalysisFCChh::compute_sigma(
   ROOT::VecOps::RVec<float> sigma;
 
   /*
-    sigma_ij = (s_ij - 4mh^2)/(m_hhh^2 - 9m_h^2)
+    sigma_ij = (s_ij - 4mh^2)/(m_hhh^2 - 9m_h^2), aiming to remove 'scale' from events
   */
 
   float s_12 = (higgs_1 + higgs_2).M2();
@@ -3612,8 +3620,9 @@ ROOT::VecOps::RVec<float> AnalysisFCChh::compute_sigma(
 
 }
 
-// reco-matches
-
+// unique reco-matches
+// finds closest truth particle within radius dR_thres, discards all other matches
+// makes sure one reco-truth match doesn't get counted twice
 ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
 AnalysisFCChh::find_reco_matches_unique(
     const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_parts,
@@ -3621,51 +3630,39 @@ AnalysisFCChh::find_reco_matches_unique(
     float dR_thres)
 {
   ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> out;
-  if (truth_parts.empty() || reco_particles.empty()) return out;
-
-  out.reserve(std::min(truth_parts.size(), reco_particles.size()));
-
-  // Track which reco indices are already used
+  // Keep track of which reco candidates have already been assigned
   std::vector<bool> reco_used(reco_particles.size(), false);
 
-  // Precompute TLVs for speed
-  std::vector<TLorentzVector> tlv_truth; tlv_truth.reserve(truth_parts.size());
-  for (const auto& t : truth_parts) tlv_truth.emplace_back(getTLV_MC(t));
-  std::vector<TLorentzVector> tlv_reco; tlv_reco.reserve(reco_particles.size());
-  for (const auto& r : reco_particles) tlv_reco.emplace_back(getTLV_reco(r));
+  std::vector<TLorentzVector> tlv_truth;
+  for (const auto& truth_part : truth_parts) {
+    tlv_truth.emplace_back(getTLV_MC(truth_part));
+  }
 
-  // For each truth, grab the nearest available reco within dR_thres
-  for (size_t it = 0; it < truth_parts.size(); ++it) {
-    std::vector<TLorentzVector> tlv_truth;
-    tlv_truth.reserve(truth_parts.size());
-    for (const auto& t : truth_parts) {
-      tlv_truth.emplace_back(getTLV_MC(t));
-    }
+  std::vector<TLorentzVector> tlv_reco;
+  for (const auto& reco_part : reco_particles) {
+    tlv_reco.emplace_back(getTLV_reco(reco_part));
+  }
 
-    std::vector<TLorentzVector> tlv_reco;
-    tlv_reco.reserve(reco_particles.size());
-    for (const auto& r : reco_particles) {
-      tlv_reco.emplace_back(getTLV_reco(r));
-    }
+  // For each truth particle, keep only the closest unused reco candidate
+  for (size_t it = 0; it < tlv_truth.size(); ++it) {
+    double best_dR = 999.0;
+    int best_ir = -1;
 
-    for (size_t it = 0; it < truth_parts.size(); ++it) {
-      const auto& tv = tlv_truth[it];
-      double best_dR = 999.0;
-      int best_ir = -1;
-      for (size_t ir = 0; ir < reco_particles.size(); ++ir) {
-        if (reco_used[ir]) continue;
-        double dR = tv.DeltaR(tlv_reco[ir]); 
-        if (dR < best_dR) {
-          best_dR = dR;
-          best_ir = ir;
-        }
-      }
-      if (best_ir >= 0 && best_dR < dR_thres) {
-        reco_used[best_ir] = true;
-        out.emplace_back(reco_particles[best_ir]);
+    for (size_t ir = 0; ir < tlv_reco.size(); ++ir) {
+      if (reco_used[ir]) continue;
+
+      double dR = tlv_truth[it].DeltaR(tlv_reco[ir]);
+      if (dR < best_dR) {
+        best_dR = dR;
+        best_ir = ir;
       }
     }
-    
+
+    // Accept the match only if it passes the dR requirement
+    if (best_ir >= 0 && best_dR < dR_thres) {
+      reco_used[best_ir] = true;
+      out.emplace_back(reco_particles[best_ir]);
+    }
   }
 
   return out;
@@ -3693,6 +3690,7 @@ AnalysisFCChh::get_btagged_not_tau_tagged(
   const unsigned bmask = 1u << btagIndex;
   const unsigned taumask = tauIndex >= 0 ? (1u << tauIndex) : 0u;
 
+  // Mark jets that pass the tau tag so they can be vetoed later
   std::vector<unsigned char> tau_veto(n_jets, 0);
   const size_t n_tau_tags = std::min(jets_tau_tags.size(),
                                      jets_tau_tags_indices.size());
@@ -3712,8 +3710,8 @@ AnalysisFCChh::get_btagged_not_tau_tagged(
     }
   }
 
+  // Avoid adding the same jet twice if multiple HF tag entries point to it
   std::vector<unsigned char> added(n_jets, 0);
-  out.reserve(n_jets);
   const size_t n_hf_tags = std::min(jets_HF_tags.size(),
                                     jets_HF_tags_indices.size());
   for (size_t i = 0; i < n_hf_tags; ++i) {
@@ -3729,17 +3727,17 @@ AnalysisFCChh::get_btagged_not_tau_tagged(
 
     const unsigned bits =
         static_cast<unsigned>(std::lrint(jets_HF_tag_values[value_index]));
-    if (bits & bmask) {
-      out.push_back(jets[jet_i]);
-      added[jet_i] = 1;
-    }
+    if ((bits & bmask) == 0u) continue;
+
+    out.push_back(jets[jet_i]);
+    added[jet_i] = 1;
   }
 
   return out;
 }
 
 
-// Keep particles with isoVar >= thr (i.e. "non-isolated" by isoVar)
+// keep only non-isolated leptons
 ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
 AnalysisFCChh::sel_by_iso_fail(const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& parts,
                                const ROOT::VecOps::RVec<float>& isoVar,
@@ -3747,93 +3745,13 @@ AnalysisFCChh::sel_by_iso_fail(const ROOT::VecOps::RVec<edm4hep::ReconstructedPa
 {
   ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> out;
   const auto n = parts.size();
-  if (isoVar.size() != n) return out; // size guard
-  out.reserve(n);
   for (size_t i = 0; i < n; ++i)
     if (isoVar[i] >= thr) out.push_back(parts[i]);
   return out;
 }
 
-ROOT::VecOps::RVec<edm4hep::MCParticleData> AnalysisFCChh::getTruthTauLeps(
-    ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles,
-    ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
-    ROOT::VecOps::RVec<podio::ObjectID> parent_ids, TString type) {
-
-  ROOT::VecOps::RVec<edm4hep::MCParticleData> tau_list;
-  bool flagchildren = false;
-  for (auto &truth_part : truth_particles) {
-    flagchildren = false;
-    if (isTau(truth_part)) {
-
-      // check also if from Higgs to count only from Higgs ones
-      if (type.Contains("from_higgs") &&
-          !isFromHiggsDirect(
-              truth_part, parent_ids,
-              truth_particles)) { //&& isFromHadron(truth_part, parent_ids,
-                                  // truth_particles) ) {
-        continue;
-      }
-      if (type.Contains("from_Z") && !hasZParent(truth_part, parent_ids, truth_particles)) {
-        continue;
-      }
-      // select both from higgs or from hadrons
-      if (type.Contains("higgshad") &&
-          !isFromHiggsDirect(truth_part, parent_ids, truth_particles) &&
-          !isFromHadron(truth_part, parent_ids, truth_particles)) {
-        // continue;
-        std::cout << " found tau neither from Higgs or from Had" << std::endl;
-        auto first_parent_index = truth_part.parents_begin;
-        auto last_parent_index = truth_part.parents_end;
-        for (int parent_i = first_parent_index; parent_i < last_parent_index;
-             parent_i++) {
-          auto parent_MC_index = parent_ids.at(parent_i).index;
-          auto parent = truth_particles.at(parent_MC_index);
-          std::cout << "Parent PDG:" << std::endl;
-          std::cout << parent.PDG << std::endl;
-        }
-        continue;
-      }
-      bool isItself = true;
-      while (isItself) {
-        auto first_child_index = truth_part.daughters_begin;
-        auto last_child_index = truth_part.daughters_end;
-        // auto child_1_MC_index = daughter_ids.at(first_child_index).index;
-        // auto hild_2_MC_index = daughter_ids.at(last_child_index-1).index;
-        for (int child_i = first_child_index; child_i < last_child_index;
-             child_i++) {
-          auto child = truth_particles.at(daughter_ids.at(child_i).index);
-          if (abs(child.PDG) == 15) {
-            isItself = true;
-            truth_part = child;
-            break;
-          } else {
-            isItself = false;
-          }
-        }
-      }
-
-      // std::cout << " found tau with children" << std::endl;
-      auto first_child_index = truth_part.daughters_begin;
-      auto last_child_index = truth_part.daughters_end;
-      for (int ch_i = first_child_index; ch_i < last_child_index; ch_i++) {
-        auto ch = truth_particles.at(daughter_ids.at(ch_i).index);
-        std::cout << "Child ID: " << ch.PDG << std::endl;
-        if (isLep(ch)) {
-          std::cout << " Is leptonic" << std::endl;
-          flagchildren = true;
-          break;
-        }
-      }
-      if (flagchildren) {
-        tau_list.push_back(truth_part);
-      }
-    }
-  }
-
-  return tau_list;
-}
-
-
+// get only tau e/mu candidates, similar in structure to gettruthtaulep
+// returns the truth electron / muon from the leptonic tau decay
 ROOT::VecOps::RVec<edm4hep::MCParticleData> AnalysisFCChh::getTruthTauEmu(
     ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles,
     ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
@@ -3905,7 +3823,8 @@ ROOT::VecOps::RVec<edm4hep::MCParticleData> AnalysisFCChh::getTruthTauEmu(
           }
         }
       }
-      edm4hep::MCParticleData tau_child{};  // NEW
+      // make output MCParticle for the tau child
+      edm4hep::MCParticleData tau_child{}; 
 
       // std::cout << " found tau with children" << std::endl;
       auto first_child_index = truth_part.daughters_begin;
@@ -3943,8 +3862,8 @@ ROOT::VecOps::RVec<edm4hep::MCParticleData> AnalysisFCChh::getTruthTauEmu(
   return tau_list;
 }
 
-
-// Return tuple of 5 RVecs: (pT_vis, pT_mis, n_charged, n_neutral, m_vis)
+// truth kinematics function for the tau decay products
+// Return tuple of 5 RVecs: (p_vis, p_mis, n_charged, n_neutral, m_vis)
 std::tuple<
   ROOT::VecOps::RVec<TLorentzVector>,  // p_vis
   ROOT::VecOps::RVec<TLorentzVector>,  // p_mis
@@ -3966,26 +3885,28 @@ AnalysisFCChh::getTruthTauHadronic(
   ROOT::VecOps::RVec<int> n_neutral_list;
   ROOT::VecOps::RVec<float> m_vis_list;
   ROOT::VecOps::RVec<float> m_mis_list;
-  ROOT::VecOps::RVec<float> n_neutrinos_list;
+  ROOT::VecOps::RVec<int> n_neutrinos_list;
 
-  for (auto& truth_part : truth_particles) {
+  for (const auto& truth_part : truth_particles) {
     if (!isTau(truth_part)) continue;
 
     // Parent-type filters
-    if (type.Contains("from_higgs") && !isFromHiggsDirect(truth_part, parent_ids, truth_particles))
-      {
-        continue;
-      }
+    if (type.Contains("from_higgs") &&
+        !isFromHiggsDirect(truth_part, parent_ids, truth_particles)) {
+      continue;
+    }
 
     if (type.Contains("from_Z") && !hasZParent(truth_part, parent_ids, truth_particles)) {
       continue;
     }
 
-    if (type.Contains("higgshad") && !isFromHiggsDirect(truth_part, parent_ids, truth_particles) && !isFromHadron(truth_part, parent_ids, truth_particles)) {
+    if (type.Contains("higgshad") &&
+        !isFromHiggsDirect(truth_part, parent_ids, truth_particles) &&
+        !isFromHadron(truth_part, parent_ids, truth_particles)) {
       continue;
     }
 
-    // Descend to final tau (last one in decay chain)
+    // Descend to final tau (last one in decay chain), skips past photon emissions etc
     auto tau = truth_part;
     bool descend = true;
     while (descend) {
@@ -4011,22 +3932,19 @@ AnalysisFCChh::getTruthTauHadronic(
         std::cout << "skipping if we find another tau" << std::endl;
         continue;
       }
-      TLorentzVector p4 = getTLV_MC(child);
+      const TLorentzVector p4 = getTLV_MC(child);
 
       if (isNeutrino(child)) {
         p_mis += p4;
         n_neutrinos++;
       } else {
         p_vis += p4;
+        // Only hadronic daughters contribute to the charged/neutral prong count, otherwise stay zero.
         if (!isLightLep(child)) {
           if (std::abs(child.charge) > 0) {
             n_charged++;
-          }
-          else if (child.charge == 0) {
+          } else {
             n_neutral++;
-          }
-          else {
-            std::cout << "Child is non-existent?" << std::endl;
           }
         }
       }
@@ -4038,20 +3956,20 @@ AnalysisFCChh::getTruthTauHadronic(
     n_charged_list.push_back(n_charged);
     n_neutral_list.push_back(n_neutral);
     n_neutrinos_list.push_back(n_neutrinos);
-    float m_vis = p_vis.M();
+    const float m_vis = p_vis.M();
     
     if (m_vis > 0) {
-      m_vis_list.push_back(p_vis.M());
+      m_vis_list.push_back(m_vis);
     } else {
       m_vis_list.push_back(-9);
     }
 
-    // also for the lep-had cases
-    float m_mis = p_mis.M();
+    // also for the lep-had cases, useful for MMC calibration functions later (and debugging)
+    const float m_mis = p_mis.M();
     
     if (n_neutrinos != 1) {
       if (m_mis > 0) {
-        m_mis_list.push_back(p_mis.M());
+        m_mis_list.push_back(m_mis);
       } else {
         std::cout << " why are we having a mass less than 0? Mass: " << m_mis << std::endl;
         m_mis_list.push_back(-9);
@@ -4078,20 +3996,25 @@ AnalysisFCChh::select_with_mask(const ROOT::VecOps::RVec<edm4hep::ReconstructedP
   return out;
 }
 
-// function which finds truth higgs in the MC particles and selects the one that
-// decays according to requested type (to ZZ or bb here)
+// Function which finds truth Higgs candidates in the MC particles and keeps
+// the selected Higgs together with their daughter pairs.
+// example: for HHH->4b2tau this returns:
+//  selected_higgs = {Hbb_pt1, Hbb_pt2, Htautau}
+//  selected_pairs = {{Hbb_pt1_b1, Hbb_pt1_b2},
+//                     {Hbb_pt2_b1, Hbb_pt2_b2},
+//                     {Htautau_tau1, Htautau_tau2}}
 std::pair<
   ROOT::VecOps::RVec<edm4hep::MCParticleData>,
   ROOT::VecOps::RVec<std::pair<edm4hep::MCParticleData, edm4hep::MCParticleData>>
 >
-AnalysisFCChh::get_truth_Higgs(
+AnalysisFCChh::get_truth_HHH_Higgses(
     ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles,
     ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
     TString decay)
 {
   using namespace ROOT::VecOps;
+  (void)decay;
 
-  // Helper lambdas
   auto pt = [](const edm4hep::MCParticleData& p) {
     return std::hypot(p.momentum.x, p.momentum.y);
   };
@@ -4100,22 +4023,19 @@ AnalysisFCChh::get_truth_Higgs(
 
   struct HiggsCand {
     edm4hep::MCParticleData H;
-    edm4hep::MCParticleData d1; // pt-ordered
-    edm4hep::MCParticleData d2; // pt-ordered
+    edm4hep::MCParticleData d1;
+    edm4hep::MCParticleData d2;
     Cat cat;
   };
 
   RVec<HiggsCand> cands;
-  cands.reserve(8);
 
-  // ---------------------------
-  // Collect all Higgs with 2 daughters (store daughter pair regardless of type)
-  // ---------------------------
-  for (auto &truth_part : truth_particles) {
+  // Collect all Higgs with exactly two daughters.
+  for (const auto& truth_part : truth_particles) {
     if (!isH(truth_part)) continue;
 
     const auto first_child_index = truth_part.daughters_begin;
-    const auto last_child_index  = truth_part.daughters_end;
+    const auto last_child_index = truth_part.daughters_end;
     if (last_child_index - first_child_index != 2) continue;
 
     const auto child_1_MC_index = daughter_ids.at(first_child_index).index;
@@ -4137,34 +4057,25 @@ AnalysisFCChh::get_truth_Higgs(
     cands.push_back({truth_part, child_1, child_2, cat});
   }
 
-  // Sort candidates by Higgs pT (descending) via indices
-  auto sort_by_Hpt = [&](const auto &a, const auto &b) { return pt(a.H) > pt(b.H); };
-  auto all_idx = Argsort(cands, sort_by_Hpt);
+  auto all_idx = Argsort(
+      cands, [&](const auto& a, const auto& b) { return pt(a.H) > pt(b.H); });
 
-  // Separate indices by category, already in pT order
-  RVec<size_t> bb_idx, tautau_idx, other_idx;
-  bb_idx.reserve(all_idx.size());
-  tautau_idx.reserve(all_idx.size());
-  other_idx.reserve(all_idx.size());
+  RVec<size_t> bb_idx;
+  RVec<size_t> tautau_idx;
 
   for (auto i : all_idx) {
-    if      (cands[i].cat == Cat::BB)     bb_idx.push_back(i);
+    if (cands[i].cat == Cat::BB) {
+      bb_idx.push_back(i);
+    }
     else if (cands[i].cat == Cat::TAUTAU) tautau_idx.push_back(i);
-    else                                  other_idx.push_back(i);
   }
 
-  // ---------------------------
-  // Selection:
-  //   - take up to 2 H->bb (leading pT)
-  //   - take 3rd Higgs: prefer leading H->tautau, else leading remaining Higgs of any type
-  // ---------------------------
+  // Take up to two leading H->bb candidates, then prefer a leading H->tautau
+  // for the third Higgs. If none is available, take the highest-pT remaining
+  // Higgs of any type.
   RVec<edm4hep::MCParticleData> selected_higgs;
   RVec<std::pair<edm4hep::MCParticleData, edm4hep::MCParticleData>> selected_pairs;
 
-  selected_higgs.reserve(3);
-  selected_pairs.reserve(3);
-
-  // Track used indices to avoid duplicates
   auto used = RVec<char>(cands.size(), 0);
 
   for (size_t k = 0; k < std::min<size_t>(2, bb_idx.size()); ++k) {
@@ -4182,23 +4093,23 @@ AnalysisFCChh::get_truth_Higgs(
     return true;
   };
 
-  // Third Higgs: prefer tautau
   bool got_third = false;
   if (!tautau_idx.empty()) {
     got_third = push_if_unused(tautau_idx[0]);
   }
 
-  // Otherwise: take highest-pT remaining Higgs of any category
   if (!got_third) {
     for (auto i : all_idx) {
-      if (push_if_unused(i)) { got_third = true; break; }
+      if (push_if_unused(i)) {
+        break;
+      }
     }
   }
 
   return {selected_higgs, selected_pairs};
 }
 
-
+// exactly the same as reco version, but for MC particles.
 ROOT::VecOps::RVec<edm4hep::MCParticleData>
 AnalysisFCChh::SortMCByPt(const ROOT::VecOps::RVec<edm4hep::MCParticleData>& in) {
   auto out = in;
@@ -4210,6 +4121,8 @@ AnalysisFCChh::SortMCByPt(const ROOT::VecOps::RVec<edm4hep::MCParticleData>& in)
   return out;
 }
 
+// function for getting the B-hadron from a Higgs decay
+// this is useful for checking reco-matching efficiencies / tau / b overlap and FTAG efficiencies
 ROOT::VecOps::RVec<edm4hep::MCParticleData>
 AnalysisFCChh::getBhadron_final_fromH(
     const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_particles,
@@ -4218,7 +4131,6 @@ AnalysisFCChh::getBhadron_final_fromH(
     float ptMin) {
 
   ROOT::VecOps::RVec<edm4hep::MCParticleData> out;
-  out.reserve(truth_particles.size()/50); // heuristic
 
   for (const auto& p : truth_particles) {
     const int pdgabs = std::abs(p.PDG);
@@ -4239,7 +4151,7 @@ AnalysisFCChh::getBhadron_final_fromH(
   return out;
 }
 
-// check if we have overlappig bs / taus
+// check if we have overlapping bs / taus
 bool AnalysisFCChh::isSignalContaminated(
   ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_b_hadrons,
   ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_taus,
@@ -4269,7 +4181,8 @@ bool AnalysisFCChh::isSignalContaminated(
   return isContam;
 }
 
-// function to get pvis and miss from a tau
+// function to get pvis and miss from a tau, useful again to check matching of hadronic taus -> jets
+// this is also used to get the visible mass from MC (m_Htautau_MC) in HHH ntuples
 std::tuple<
   ROOT::VecOps::RVec<edm4hep::MCParticleData>,  // p_vis
   ROOT::VecOps::RVec<edm4hep::MCParticleData> // p_mis
@@ -4359,6 +4272,10 @@ AnalysisFCChh::visible_tauhad(
 
 
 // function to find the minimum distance between electron and reco-matched signal objects
+// used in HHH signal lepton optimisation
+// a preliminary optimisation found falling isolation efficiencies for high-pT leptons, 
+// this function helped to isolate due to high-pT signal objects being spatially close
+// for example tau(lep), tau(had) within dR < 0.3 (which is the iso radius)
 float AnalysisFCChh::min_dr_signal(
   const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& target_obj,
   const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& dR1_obj,
@@ -4395,6 +4312,7 @@ float AnalysisFCChh::min_dr_signal(
 
   return mindR;
 }
+
 // check what type the W decay is: to lv or qq
 int AnalysisFCChh::checkWDecay_HHH(
     edm4hep::MCParticleData truth_W,
@@ -4444,17 +4362,16 @@ int AnalysisFCChh::checkWDecay_HHH(
   //  std::cout << "Checking W decay: PDGID 1 = " << child_1.PDG << " and PDGID
   //  2 = " <<  child_2.PDG << std::endl;
   // scheme: is e/mu: 1, tau:2, had: 4
-  // scheme: e/μ = 1, τ = 2, hadronic = 4
   if ((isLightLep(child_1) && isNeutrino(child_2)) ||
       (isNeutrino(child_1) && isLightLep(child_2))) {
-    return 1; // W → eν or μν
+    return 1; // W -> e nu / mu nu
   }
   else if ((isTau(child_1) && isNeutrino(child_2)) ||
           (isNeutrino(child_1) && isTau(child_2))) {
-    return 2; // W → τν
+    return 2; // W -> taunu
   }
   else if (isQuark(child_1) && isQuark(child_2)) {
-    return 4; // W → qq′
+    return 4; // W -> qq
   }
   else {
     std::cout << "Found different decay of W boson than lv or qq! Please check."
@@ -4470,47 +4387,38 @@ int AnalysisFCChh::WWlvlvFilter_HHH(
     ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles,
     ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
     ROOT::VecOps::RVec<podio::ObjectID> parent_ids) {
-  // first scan through the truth particles to find Z bosons
+  (void)parent_ids;
+  // Scan the truth particles to find hard-process W bosons.
 
-  auto isHardProcess = [](const edm4hep::MCParticleData& p){
-    const int s = std::abs(p.generatorStatus);   // Pythia8: negative if decayed
-    //std::cout << "Generator status " << s;
-    return (s >= 21 && s <= 29);                 // hardest subprocess
+  auto isHardProcess = [](const edm4hep::MCParticleData& p) {
+    const int s = std::abs(p.generatorStatus);
+    return s >= 21 && s <= 29;
   };
 
   std::vector<edm4hep::MCParticleData> w_list;
-  for (auto &truth_part : truth_particles) {
+  for (const auto& truth_part : truth_particles) {
     if (isW(truth_part) && isHardProcess(truth_part)) {
       w_list.push_back(truth_part);
     }
-    // Tau veto: - actually probably doesnt work as intended, to revise!!
-    //  if  (isTau(truth_part)){
-    //  return false;
-    // }
   }
-  //if (w_list.size() != 2) {
-  //  std::cout << " found how many Ws? " << w_list.size() << std::endl; 
-  //}
-  if (w_list.size() == 2) {
-    int w1_decay = checkWDecay_HHH(w_list.at(0), daughter_ids, truth_particles);
-    int w2_decay = checkWDecay_HHH(w_list.at(1), daughter_ids, truth_particles);
 
-    int ww_decay_flag = w1_decay + w2_decay;
-
-    // flags are W(lv) =1 and W(qq) =2, so flag for lvlvv is =2 (lvqq=3, 4q=4)
-    return ww_decay_flag;
-
-  } else {
+  if (w_list.size() != 2) {
     return -9;
   }
+
+  const int w1_decay = checkWDecay_HHH(w_list.at(0), daughter_ids, truth_particles);
+  const int w2_decay = checkWDecay_HHH(w_list.at(1), daughter_ids, truth_particles);
+
+  // flags are W(lv) = 1 and W(qq) = 2, so WW->lvlv = 2 (lvqq = 3, qqqq = 4)
+  return w1_decay + w2_decay;
 }
 
 inline float safeAngle3D(const TLorentzVector& a, const TLorentzVector& b) {
-    const TVector3 av = a.Vect();
-    const TVector3 bv = b.Vect();
-    if (av.Mag2() <= 0.0 || bv.Mag2() <= 0.0) return -1.f;
-    return static_cast<float>(av.Angle(bv)); // radians
-  }
+  const TVector3 av = a.Vect();
+  const TVector3 bv = b.Vect();
+  if (av.Mag2() <= 0.0 || bv.Mag2() <= 0.0) return -1.f;
+  return static_cast<float>(av.Angle(bv));  // radians
+}
 
 
 std::array<AnalysisFCChh::TauAngleRecord, 2>
@@ -4525,10 +4433,9 @@ AnalysisFCChh::matchTwoTruthTwoRecoAndAngles(
     const TLorentzVector& reco1,
     float drCut
 ) {
-  std::array<TauAngleRecord, 2> out = {
+  std::array<TauAngleRecord, 2> out{
       makeBaseRecord(0, nprongs_truth_0, pvis_truth_0, pmiss_truth_0),
-      makeBaseRecord(1, nprongs_truth_1, pvis_truth_1, pmiss_truth_1)
-  };
+      makeBaseRecord(1, nprongs_truth_1, pvis_truth_1, pmiss_truth_1)};
 
   // dR matrix between truth visible axes and reco candidates
   const float dR00 = pvis_truth_0.DeltaR(reco0);
@@ -4536,31 +4443,34 @@ AnalysisFCChh::matchTwoTruthTwoRecoAndAngles(
   const float dR10 = pvis_truth_1.DeltaR(reco0);
   const float dR11 = pvis_truth_1.DeltaR(reco1);
 
-  // Two possible 1-1 assignments; pick the smaller total ΔR
+  // Two possible 1-1 assignments; pick the smaller total dR
+  // we could probably still do min(dR)->pair these two and be safe, 
+  // since almost always the assignment will be fairly unambiguous
   const float sumA = dR00 + dR11; // (0->0, 1->1)
   const float sumB = dR01 + dR10; // (0->1, 1->0)
   const bool useA = (sumA <= sumB);
 
   auto applyMatch = [&](int truthIdx, int recoIdx, float dR) {
-    TauAngleRecord& r = out.at(truthIdx);
+    TauAngleRecord& record = out.at(truthIdx);
 
-    const TLorentzVector& pmiss_t = (truthIdx == 0) ? pmiss_truth_0 : pmiss_truth_1;
-    const TLorentzVector& reco    = (recoIdx  == 0) ? reco0        : reco1;
+    const TLorentzVector& pmiss_t =
+        (truthIdx == 0) ? pmiss_truth_0 : pmiss_truth_1;
+    const TLorentzVector& reco = (recoIdx == 0) ? reco0 : reco1;
 
-    r.dR_best = dR;
+    record.dR_best = dR;
 
     if (dR >= drCut) {
-      r.matched  = false;
-      r.reco_idx = -1;
-      r.pt_reco  = -1.f;
-      r.theta_rt = -1.f;
+      record.matched = false;
+      record.reco_idx = -1;
+      record.pt_reco = -1.f;
+      record.theta_rt = -1.f;
       return;
     }
 
-    r.matched  = true;
-    r.reco_idx = recoIdx;
-    r.pt_reco  = static_cast<float>(reco.Pt());
-    r.theta_rt = safeAngle3D(reco, pmiss_t); // reco visible vs truth missing
+    record.matched = true;
+    record.reco_idx = recoIdx;
+    record.pt_reco = static_cast<float>(reco.Pt());
+    record.theta_rt = safeAngle3D(reco, pmiss_t); // reco visible vs truth missing
   };
 
   if (useA) {
@@ -4574,6 +4484,8 @@ AnalysisFCChh::matchTwoTruthTwoRecoAndAngles(
   return out;
 }
 
+// inline function to get momentum resolutions of jets, which is used in the directionally aware MET resolution 
+// Only used in MMC to improve efficiency of more asymmetric events
 inline double get_sigma_rel_from_map(double pt, double abs_eta)
 {
   // Static so the file and hist are loaded only once.
@@ -4694,179 +4606,114 @@ AnalysisFCChh::HiggsCandidateResult AnalysisFCChh::getHiggsCandidates(
   float target_mass2)
 {
   HiggsCandidateResult out;
-  out.pairs.clear();
-  out.used_bjet_indices.clear();
+  if (bjets.size() != 4) return out;
 
-  RecoParticlePair bestH1, bestH2;
-  std::pair<int,int> bestIdxH1{-1,-1};
-  std::pair<int,int> bestIdxH2{-1,-1};
-  float bestScore = std::numeric_limits<float>::max();
+  const bool valid_strategy = strategy == "dRminmax" ||
+                              strategy == "linearmass" ||
+                              strategy == "squaremass";
+  if (!valid_strategy) return out;
 
-  // three implemented strategies: linear, square and dR-pairing
-  // final results all use dR-pairing.
-  auto score_mass   = [&](float m1, float m2)->float {
-    if (strategy == "linearmass")
-      return std::fabs(m1 - target_mass1) + std::fabs(m2 - target_mass2);
-    if (strategy == "squaremass")
-      return std::pow(m1 - target_mass1, 2.f) + std::pow(m2 - target_mass2, 2.f);
-    return std::numeric_limits<float>::infinity();
+  // Convert the four jets once, then try the three possible pairings below.
+  const std::array<TLorentzVector, 4> jet_p4{{
+    getTLV_reco(bjets[0]),
+    getTLV_reco(bjets[1]),
+    getTLV_reco(bjets[2]),
+    getTLV_reco(bjets[3])
+  }};
+
+  struct Pairing {
+    size_t jet1;
+    size_t jet2;
+    size_t jet3;
+    size_t jet4;
   };
-  auto score_dRmax = [&](const TLorentzVector& a1, const TLorentzVector& a2,
-                         const TLorentzVector& b1, const TLorentzVector& b2)->float {
-    return std::max(a1.DeltaR(a2), b1.DeltaR(b2));
-  };
 
-  if (bjets.size() == 4) {
-    for (size_t i = 0; i < 4; ++i) {
-      TLorentzVector tlv_i = getTLV_reco(bjets[i]);
-      for (size_t j = i + 1; j < 4; ++j) {
-        TLorentzVector tlv_j = getTLV_reco(bjets[j]);
-        const float m_h1 = (tlv_i + tlv_j).M();
+  const std::array<Pairing, 3> pairings{{
+    {0, 1, 2, 3}, // (jet 0 + jet 1), (jet 2 + jet 3)
+    {0, 2, 1, 3}, // (jet 0 + jet 2), (jet 1 + jet 3)
+    {0, 3, 1, 2}  // (jet 0 + jet 3), (jet 1 + jet 2)
+  }};
 
-        for (size_t k = 0; k < 4; ++k) {
-          if (k == i || k == j) continue;
-          TLorentzVector tlv_k = getTLV_reco(bjets[k]);
+  auto score_pairing = [&](const Pairing& pairing) {
+    const auto& p1 = jet_p4[pairing.jet1];
+    const auto& p2 = jet_p4[pairing.jet2];
+    const auto& p3 = jet_p4[pairing.jet3];
+    const auto& p4 = jet_p4[pairing.jet4];
 
-          for (size_t l = k + 1; l < 4; ++l) {
-            if (l == i || l == j) continue;
-            TLorentzVector tlv_l = getTLV_reco(bjets[l]);
-            const float m_h2 = (tlv_k + tlv_l).M();
-
-            float score = 0.f;
-            if (strategy == "dRminmax") {
-              score = score_dRmax(tlv_i, tlv_j, tlv_k, tlv_l);
-            } else {
-              score = score_mass(m_h1, m_h2);
-            }
-
-            if (score < bestScore) {
-              bestScore = score;
-              bestH1 = {bjets[i], bjets[j]};
-              bestH2 = {bjets[k], bjets[l]};
-              bestIdxH1 = {static_cast<int>(i), static_cast<int>(j)};
-              bestIdxH2 = {static_cast<int>(k), static_cast<int>(l)};
-            }
-          }
-        }
-      }
+    // dRminmax: prefer two compact Higgs candidates.
+    if (strategy == "dRminmax") {
+      return static_cast<float>(std::max(p1.DeltaR(p2), p3.DeltaR(p4)));
     }
 
-    if (bestScore < std::numeric_limits<float>::max()) {
-      TLorentzVector h1 = getTLV_reco(bestH1.particle_1) + getTLV_reco(bestH1.particle_2);
-      TLorentzVector h2 = getTLV_reco(bestH2.particle_1) + getTLV_reco(bestH2.particle_2);
+    const float pair_mass_1 = (p1 + p2).M();
+    const float pair_mass_2 = (p3 + p4).M();
 
-      // order by pT (first = leading)
-      if (h1.Pt() >= h2.Pt()) {
-        out.pairs = {bestH1, bestH2};
-      } else {
-        out.pairs = {bestH2, bestH1};
-        std::swap(bestIdxH1, bestIdxH2);
-      }
-      out.used_bjet_indices = {bestIdxH1.first, bestIdxH1.second, bestIdxH2.first, bestIdxH2.second};
-      return out;
+    // target_mass1 is the heavier Higgs: always compare it with the larger
+    // reconstructed pair mass. target_mass2 is compared with the smaller one.
+    const float mass_heavy = std::max(pair_mass_1, pair_mass_2);
+    const float mass_light = std::min(pair_mass_1, pair_mass_2);
+    const float heavy_difference = mass_heavy - target_mass1;
+    const float light_difference = mass_light - target_mass2;
+
+    // linearmass: sum the absolute mass differences.
+    if (strategy == "linearmass") {
+      return std::fabs(heavy_difference) + std::fabs(light_difference);
+    }
+
+    // squaremass: square the differences so large deviations cost more.
+    return heavy_difference * heavy_difference +
+           light_difference * light_difference;
+  };
+
+  // Find the best of the three pairings.
+  Pairing best_pairing = pairings[0];
+  float best_score = score_pairing(best_pairing);
+  for (size_t i = 1; i < pairings.size(); ++i) {
+    const float score = score_pairing(pairings[i]);
+    if (score < best_score) {
+      best_score = score;
+      best_pairing = pairings[i];
     }
   }
 
-  // 
-  if (bestScore < std::numeric_limits<float>::max()) {
-    TLorentzVector h1 = getTLV_reco(bestH1.particle_1) + getTLV_reco(bestH1.particle_2);
-    TLorentzVector h2 = getTLV_reco(bestH2.particle_1) + getTLV_reco(bestH2.particle_2);
+  RecoParticlePair candidate_a = {
+    bjets[best_pairing.jet1], bjets[best_pairing.jet2]
+  };
+  RecoParticlePair candidate_b = {
+    bjets[best_pairing.jet3], bjets[best_pairing.jet4]
+  };
 
-    if (h1.Pt() >= h2.Pt()) {
-      out.pairs = {bestH1, bestH2};
-    } else {
-      out.pairs = {bestH2, bestH1};
-      std::swap(bestIdxH1, bestIdxH2);
-    }
+  const auto candidate_a_p4 = jet_p4[best_pairing.jet1] + jet_p4[best_pairing.jet2];
+  const auto candidate_b_p4 = jet_p4[best_pairing.jet3] + jet_p4[best_pairing.jet4];
 
-    auto push_if_b = [&](int idxLocal){
-      if (0 <= idxLocal && idxLocal <= 2) out.used_bjet_indices.push_back(idxLocal);
+  // Put the higher-pT Higgs candidate first.
+  if (candidate_a_p4.Pt() >= candidate_b_p4.Pt()) {
+    out.pairs = {candidate_a, candidate_b};
+    out.used_bjet_indices = {
+      static_cast<int>(best_pairing.jet1),
+      static_cast<int>(best_pairing.jet2),
+      static_cast<int>(best_pairing.jet3),
+      static_cast<int>(best_pairing.jet4)
     };
-    push_if_b(bestIdxH1.first);
-    push_if_b(bestIdxH1.second);
-    push_if_b(bestIdxH2.first);
-    push_if_b(bestIdxH2.second);
-
-    return out;
+  } else {
+    out.pairs = {candidate_b, candidate_a};
+    out.used_bjet_indices = {
+      static_cast<int>(best_pairing.jet3),
+      static_cast<int>(best_pairing.jet4),
+      static_cast<int>(best_pairing.jet1),
+      static_cast<int>(best_pairing.jet2)
+    };
   }
 
-  // Nothing found: return empty
   return out;
 }
 
-ROOT::VecOps::RVec<TLorentzVector>
-AnalysisFCChh::get_Htautau_vis_exclusive_TLVs(
-  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& tauJets,
-  int n_tau,
-  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& electrons,
-  int n_el,
-  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& muons,
-  int n_mu)
-{
-
-  auto isOS = [](const edm4hep::ReconstructedParticleData& a,
-                 const edm4hep::ReconstructedParticleData& b) {
-    return a.charge * b.charge < 0;
-  };
-
-  auto orderByPt = [](const TLorentzVector& a, const TLorentzVector& b) {
-    return (a.Pt() >= b.Pt()) ? std::make_pair(a, b) : std::make_pair(b, a);
-  };
-
-  // 1) lep–had: exactly one tau, one electron, no mu; OS(tau,e)
-  if (n_tau == 1 && n_el == 1 && n_mu == 0) {
-    if (isOS(tauJets[0], electrons[0])) {
-      const TLorentzVector p4a = getTLV_reco(tauJets[0]);
-      const TLorentzVector p4b = getTLV_reco(electrons[0]);
-      //auto [lead, sub] = orderByPt(p4a, p4b);
-      // no ordering here, nice to keep lepton information separate for ML training in lephad channel
-      return {p4a, p4b, p4a + p4b};
-    }
-    return ROOT::VecOps::RVec<TLorentzVector>(3); // {0,0,0}
-  }
-
-  // 2) lep–had: exactly one tau, one mu, no e; OS(τ,μ)
-  if (n_tau == 1 && n_mu == 1 && n_el == 0) {
-    if (isOS(tauJets[0], muons[0])) {
-      const TLorentzVector p4a = getTLV_reco(tauJets[0]);
-      const TLorentzVector p4b = getTLV_reco(muons[0]);
-      //auto [lead, sub] = orderByPt(p4a, p4b);
-      // no ordering here, nice to keep lepton information separate for ML training in lephad channel
-      return {p4a, p4b, p4a + p4b};
-    }
-    return ROOT::VecOps::RVec<TLorentzVector>(3);
-  }
-
-  // 3) had–had: no leptons, exactly two taus
-  if (n_el == 0 && n_mu == 0 && n_tau == 2) {
-    // assume exactly two taus: tauJets[0], tauJets[1]
-    const auto& tau1 = tauJets[0];
-    const auto& tau2 = tauJets[1];
-
-    if (!isOS(tau1, tau2)) {
-        // return empty if not opposite sign
-        return ROOT::VecOps::RVec<TLorentzVector>(3);
-    }
-
-    const TLorentzVector p4a = getTLV_reco(tau1);
-    const TLorentzVector p4b = getTLV_reco(tau2);
-
-    auto [lead, sub] = orderByPt(p4a, p4b);
-
-    return ROOT::VecOps::RVec<TLorentzVector>{lead, sub, lead + sub};
-  }
-
-  // None matched exclusively → return zeroed triplet
-  return ROOT::VecOps::RVec<TLorentzVector>(3);
-}
-
-// bit of a duplicate from above, nice thing is to have isLep1/2 to be used later by MMC
 std::tuple<
-  edm4hep::ReconstructedParticleData, // lead constituent
-  edm4hep::ReconstructedParticleData, // sublead constituent
-  TLorentzVector,                      // visible H→tautau
-  bool, // return if tau1 is a lepton or not
-  bool // return if tau2 is a lepton or not
+  edm4hep::ReconstructedParticleData, // constituent 1
+  edm4hep::ReconstructedParticleData, // constituent 2
+  TLorentzVector,                      // visible Htautau
+  bool,                                // constituent 1 is an electron or muon
+  bool                                 // constituent 2 is an electron or muon
 > AnalysisFCChh::get_Htautau_vis_exclusive_recoTLV(
   const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& tauJets,
   const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& electrons,
@@ -4889,53 +4736,35 @@ std::tuple<
   };
   auto makeVisH = [&](const edm4hep::ReconstructedParticleData& a,
                       const edm4hep::ReconstructedParticleData& b) {
-    // Prefer using your existing builder to ensure consistent calibration
     const TLorentzVector p4a = getTLV_reco(a);
     const TLorentzVector p4b = getTLV_reco(b);
     return p4a + p4b;
   };
 
-  // 1) lep–had: exactly one tau, one electron, no mu
+  // 1) lep-had: exactly one tau, one electron, no mu
   if (nTau == 1 && nE == 1 && nMu == 0) {
     if (isOS(tauJets[0], electrons[0])) {
-      auto lead = tauJets[0];
-      auto sub = electrons[0];
-      auto visH = makeVisH(lead, sub);
-      
-      return {lead, sub, visH, false, true};
+      return {tauJets[0], electrons[0],
+              makeVisH(tauJets[0], electrons[0]), false, true};
     }
     return { {}, {}, {}, false, false };
   }
 
-  // 2) lep–had: exactly one tau, one mu, no e
+  // 2) lep-had: exactly one tau, one mu, no e
   if (nTau == 1 && nMu == 1 && nE == 0) {
     if (isOS(tauJets[0], muons[0])) {
-      auto lead = tauJets[0];
-      auto sub = muons[0];
-      auto visH = makeVisH(lead, sub);
-      
-      return {lead, sub, visH, false, true};
+      return {tauJets[0], muons[0],
+              makeVisH(tauJets[0], muons[0]), false, true};
     }
     return { {}, {}, {}, false, false };
   }
 
-  // 3) had–had: no leptons, at least two taus
-  if (nE == 0 && nMu == 0 && nTau >= 2) {
-    float bestScore = -1.f;
-    int   bestI = -1, bestJ = -1;
-    for (int i = 0; i < nTau; ++i) {
-      for (int j = i + 1; j < nTau; ++j) {
-        if (!isOS(tauJets[i], tauJets[j])) continue;
-        const float score = pt(tauJets[i]) + pt(tauJets[j]);
-        if (score > bestScore) { bestScore = score; bestI = i; bestJ = j; }
-      }
-    }
-    if (bestI >= 0) {
-      auto [lead, sub] = orderByPt(tauJets[bestI], tauJets[bestJ]);
-      auto visH = makeVisH(lead, sub);
-      return {lead, sub, visH, false, false};
-    }
-    return { {}, {}, {}, false, false };
+  // 3) had-had: no leptons, exactly two opposite-sign taus
+  if (nE == 0 && nMu == 0 && nTau == 2) {
+    if (!isOS(tauJets[0], tauJets[1])) return {{}, {}, {}, false, false};
+
+    auto [lead, sub] = orderByPt(tauJets[0], tauJets[1]);
+    return {lead, sub, makeVisH(lead, sub), false, false};
   }
 
   // None matched exclusively
@@ -5001,7 +4830,7 @@ float AnalysisFCChh::ditau_mass_collinear(
     return static_cast<float>(mT);
   }
 
-  // Solve MET as linear combo of visible τ directions
+  // Solve MET as linear combo of visible tau directions
   const double a = ( METx * py2 - METy * px2) / denom;
   const double b = (-METx * py1 + METy * px1) / denom;
 
@@ -5212,7 +5041,7 @@ float AnalysisFCChh::aplanarity(
   return static_cast<float>(A);
 }
 
-// find a Z->ll decay on truth level
+// find a Z->tautau decay on truth level
 ROOT::VecOps::RVec<edm4hep::MCParticleData> AnalysisFCChh::getTruthZtautau(
     const ROOT::VecOps::RVec<edm4hep::MCParticleData> &truth_particles,
     const ROOT::VecOps::RVec<podio::ObjectID> &daughter_ids) {
@@ -5227,7 +5056,7 @@ ROOT::VecOps::RVec<edm4hep::MCParticleData> AnalysisFCChh::getTruthZtautau(
       auto &cand = truth_particles[daughter_ids[i].index];
       daughters.push_back(cand);
     }
-
+    // Tau pdg -> 15
     if (daughters.size() == 2 &&
         std::abs(daughters[0].PDG) == 15 &&
         std::abs(daughters[1].PDG) == 15) {
@@ -5295,57 +5124,51 @@ float AnalysisFCChh::xwt(
   constexpr float mt_nom       = 172.5f;   // GeV
   constexpr float sigma_floor  = 1e-3f;
 
-  auto p4b = [&](int ib) { return getTLV_reco(bjets[ib]); };
-  auto p4j = [&](int ij) { return getTLV_reco(untaggedjets[ij]); };
-  auto p4t = [&](int it) { return getTLV_reco(taujets[it]);     };
-  auto p4e = [&](int ie) { return getTLV_reco(electrons[ie]);   };
-  auto p4m = [&](int im) { return getTLV_reco(muons[im]);       };
-
   auto rel_sigma = [&](float m) {
     // simple 10% relative "mass resolution" with a small floor
     return std::max(0.1f * std::abs(m), sigma_floor);
   };
-  auto add_in_quad = [](float a, float b){ return std::sqrt(a*a + b*b); };
+
+  float best = std::numeric_limits<float>::infinity();
+  auto consider_masses = [&](float mW, float mt) {
+    const float pullW = (mW - mW_nom) / rel_sigma(mW);
+    const float pullt = (mt - mt_nom) / rel_sigma(mt);
+    const float score = std::sqrt(pullW*pullW + pullt*pullt);
+    if (score < best) best = score;
+  };
+  const bool valid_met = std::isfinite(met_px) && std::isfinite(met_py);
 
   // Neutrino from MET (pz=0, massless)
   TLorentzVector nu4;
-  if (std::isfinite(met_px) && std::isfinite(met_py)) {
+  if (valid_met) {
     const double met = std::hypot(met_px, met_py);
     nu4.SetPxPyPzE(met_px, met_py, 0.0, met);
   }
-
-  float best = std::numeric_limits<float>::infinity();
 
   // ---------------------------
   // hadronic W: W->jj
   // ---------------------------
   if (nu >= 2) {
     for (int ib = 0; ib < nb; ++ib) {
-      const TLorentzVector b = p4b(ib);
+      const TLorentzVector b = getTLV_reco(bjets[ib]);
       for (int i = 0; i < nu; ++i) {
-        const TLorentzVector ji = p4j(i);
+        const TLorentzVector ji = getTLV_reco(untaggedjets[i]);
         for (int k = i+1; k < nu; ++k) {
-          const TLorentzVector jk = p4j(k);
+          const TLorentzVector jk = getTLV_reco(untaggedjets[k]);
           const TLorentzVector Wjj   = ji + jk;
           const TLorentzVector topbj = b  + Wjj;
 
           const float mW = (float)Wjj.M();
           const float mt = (float)topbj.M();
 
-          const float pullW = (mW - mW_nom) / rel_sigma(mW);
-          const float pullt = (mt - mt_nom) / rel_sigma(mt);
-          const float chi2  = add_in_quad(pullW, pullt);
-
-          if (chi2 < best) best = chi2;
+          consider_masses(mW, mt);
         }
       }
     }
   }
 
-  // Helper for leptonic/tau W: compute chi2 with l (τ/e/μ) + MET
+  // Score a leptonic/tau W using l (tau/e/mu) + MET.
   auto consider_leptonicW = [&](const TLorentzVector& b, const TLorentzVector& l) {
-    if (!std::isfinite(met_px) || !std::isfinite(met_py)) return;
-
     const float pt_l  = (float)l.Pt();
     const float pt_nu = (float)nu4.Pt();
     const float dphi  = std::abs(TVector2::Phi_mpi_pi(l.Phi() - nu4.Phi()));
@@ -5355,33 +5178,29 @@ float AnalysisFCChh::xwt(
 
     const float mtop = (float)(b + l + nu4).M();
 
-    const float pullW = (mT  - mW_nom) / rel_sigma(mT);
-    const float pullt = (mtop - mt_nom) / rel_sigma(mtop);
-    const float chi2  = add_in_quad(pullW, pullt);
-
-    if (chi2 < best) best = chi2;
+    consider_masses(mT, mtop);
   };
 
   // ---------------------------
-  // B) Tau W: W->τν  (use tau_h + MET)
+  // B) Tau W: W->taunu  (use tau_h + MET)
   // ---------------------------
-  if (nt >= 1 && std::isfinite(met_px) && std::isfinite(met_py)) {
+  if (nt >= 1 && valid_met) {
     for (int ib = 0; ib < nb; ++ib) {
-      const TLorentzVector b = p4b(ib);
+      const TLorentzVector b = getTLV_reco(bjets[ib]);
       for (int it = 0; it < nt; ++it) {
-        consider_leptonicW(b, p4t(it));
+        consider_leptonicW(b, getTLV_reco(taujets[it]));
       }
     }
   }
 
   // ---------------------------
-  // C) Leptonic W: W->eν and W->μν  (use e/μ + MET)
+  // C) Leptonic W: W->enu and W->munu  (use e/mu + MET)
   // ---------------------------
-  if ((ne >= 1 || nm >= 1) && std::isfinite(met_px) && std::isfinite(met_py)) {
+  if ((ne >= 1 || nm >= 1) && valid_met) {
     for (int ib = 0; ib < nb; ++ib) {
-      const TLorentzVector b = p4b(ib);
-      for (int ie = 0; ie < ne; ++ie) consider_leptonicW(b, p4e(ie));
-      for (int im = 0; im < nm; ++im) consider_leptonicW(b, p4m(im));
+      const TLorentzVector b = getTLV_reco(bjets[ib]);
+      for (int ie = 0; ie < ne; ++ie) consider_leptonicW(b, getTLV_reco(electrons[ie]));
+      for (int im = 0; im < nm; ++im) consider_leptonicW(b, getTLV_reco(muons[im]));
     }
   }
 
@@ -5470,31 +5289,35 @@ int AnalysisFCChh::find_hhh_signal_match(
   const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& reco_b_jets,
   float dR_thres)
 {
-  // Need at least 4 truth Bs and 2 truth taus to even try
-  if (truth_B_fromH.size() < 4 || truth_tauhad_vis_fromH.size() < 2) return false;
-  if (reco_b_jets.empty() || reco_tau_jets.empty()) return false;
+  // Both truth multiplicities and nonempty reco collections are required.
+  if (truth_B_fromH.size() < 4 || truth_tauhad_vis_fromH.size() < 2) return 0;
+  if (reco_b_jets.empty() || reco_tau_jets.empty()) return 0;
 
-  // Build TLVs
-  std::vector<TLorentzVector> tlv_truth_B; tlv_truth_B.reserve(truth_B_fromH.size());
+  // Build four-vectors for the two independent matching passes.
+  std::vector<TLorentzVector> tlv_truth_B;
+  tlv_truth_B.reserve(truth_B_fromH.size());
   for (const auto& b : truth_B_fromH) tlv_truth_B.emplace_back(getTLV_MC(b));
 
-  std::vector<TLorentzVector> tlv_truth_tau; tlv_truth_tau.reserve(truth_tauhad_vis_fromH.size());
+  std::vector<TLorentzVector> tlv_truth_tau;
+  tlv_truth_tau.reserve(truth_tauhad_vis_fromH.size());
   for (const auto& t : truth_tauhad_vis_fromH) tlv_truth_tau.emplace_back(getTLV_MC(t));
 
-  std::vector<TLorentzVector> tlv_reco_b; tlv_reco_b.reserve(reco_b_jets.size());
+  std::vector<TLorentzVector> tlv_reco_b;
+  tlv_reco_b.reserve(reco_b_jets.size());
   for (const auto& r : reco_b_jets) tlv_reco_b.emplace_back(getTLV_reco(r));
 
-  std::vector<TLorentzVector> tlv_reco_tau; tlv_reco_tau.reserve(reco_tau_jets.size());
+  std::vector<TLorentzVector> tlv_reco_tau;
+  tlv_reco_tau.reserve(reco_tau_jets.size());
   for (const auto& r : reco_tau_jets) tlv_reco_tau.emplace_back(getTLV_reco(r));
 
   auto greedy_match_count = [dR_thres](const std::vector<TLorentzVector>& truth,
-                                       const std::vector<TLorentzVector>& reco) -> int {
+                                      const std::vector<TLorentzVector>& reco) -> int {
     if (truth.empty() || reco.empty()) return 0;
 
-    // match in descending pT of truth to stabilize
+    // Higher-pT truth objects choose first; each reco entry is used at most once.
     std::vector<int> order(truth.size());
     std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&](int i, int j){
+    std::sort(order.begin(), order.end(), [&](int i, int j) {
       return truth[i].Pt() > truth[j].Pt();
     });
 
@@ -5502,18 +5325,18 @@ int AnalysisFCChh::find_hhh_signal_match(
     int matched = 0;
 
     for (int it : order) {
-      double bestDR = 1e9;
-      int bestJ = -1;
+      double best_dR = 1e9;
+      int best_reco_index = -1;
       for (size_t jr = 0; jr < reco.size(); ++jr) {
         if (used[jr]) continue;
         const double dR = truth[it].DeltaR(reco[jr]);
-        if (dR < dR_thres && dR < bestDR) {
-          bestDR = dR;
-          bestJ = static_cast<int>(jr);
+        if (dR < dR_thres && dR < best_dR) {
+          best_dR = dR;
+          best_reco_index = static_cast<int>(jr);
         }
       }
-      if (bestJ >= 0) {
-        used[bestJ] = 1;
+      if (best_reco_index >= 0) {
+        used[best_reco_index] = 1;
         ++matched;
       }
     }
@@ -5524,12 +5347,8 @@ int AnalysisFCChh::find_hhh_signal_match(
   const int nB_matched   = greedy_match_count(tlv_truth_B,   tlv_reco_b);
   const int nTau_matched = greedy_match_count(tlv_truth_tau, tlv_reco_tau);
 
-  // Encode result
-  int flag = 0;
-  if (nTau_matched >= 2) flag += 2;
-  if (nB_matched  >= 4) flag += 4;
-
-  return flag;  // 0, 2, 4, or 6
+  // Bit flags: 2 = at least two tau matches, 4 = at least four B matches.
+  return (nTau_matched >= 2 ? 2 : 0) | (nB_matched >= 4 ? 4 : 0);
 }
 
 inline double lognormal_cdf(double theta, double mu_v, double sig_v, double c_v) {
@@ -5587,10 +5406,10 @@ inline std::vector<float> solve_pz_quadratic_tau(const TLorentzVector& tau_vis,
        - 2 p_vz (K + p_vx*px + p_vy*py) pz
        + [E_v^2 (pT^2 + m_nu^2) - (K + p_vx*px + p_vy*py)^2] = 0.
 
-    - For hadronic τ: isLep = false, m_nu_eff = 0.
-      Choose m_vis ≈ 0.8 GeV (1-prong) or 1.2 GeV (3-prong).
-    - For leptonic τ: isLep = true,
-      m_vis = m_lep (0.0005 or 0.105 GeV), m_nu_eff typically 0.3–0.8 GeV.
+    - For hadronic tau: isLep = false, m_nu_eff = 0.
+      Choose m_vis approximately 0.8 GeV (1-prong) or 1.2 GeV (3-prong).
+    - For leptonic tau: isLep = true,
+      m_vis = m_lep (0.0005 or 0.105 GeV), m_nu_eff typically 0.3-0.8 GeV.
   */
 
   const float px = pT_nu * std::cos(phi_nu);
@@ -5825,11 +5644,10 @@ static std::vector<std::pair<float,float>> solve_ditau_MMC_METScan_para_perp_vis
   const BetaParams beta_leg2_p3{1.24888073f, 3.70853247f};
   const BetaParams beta_leg2_p0{2.02570375f, 1.11420266f}; 
 
-  auto beta_pdf = [](float x, const BetaParams& p) -> float {
+  auto beta_pdf = [](float x, const BetaParams& p, double lnB) -> float {
     if (!(x > 0.f && x < 1.f)) return 0.f;
     const double a = p.a;
     const double b = p.b;
-    const double lnB = std::lgamma(a) + std::lgamma(b) - std::lgamma(a + b);
     const double lnpdf = (a - 1.0) * std::log(x) + (b - 1.0) * std::log(1.0 - x) - lnB;
     return static_cast<float>(std::exp(lnpdf));
   };
@@ -5854,11 +5672,59 @@ static std::vector<std::pair<float,float>> solve_ditau_MMC_METScan_para_perp_vis
     }
   };
 
+  const BetaParams beta1 = pick_beta(n_charged_tracks_1, isLep1, 1);
+  const BetaParams beta2 = pick_beta(n_charged_tracks_2, isLep2, 2);
+  auto beta_norm = [](const BetaParams& p) {
+    const double a = p.a, b = p.b;
+    return std::lgamma(a) + std::lgamma(b) - std::lgamma(a + b);
+  };
+  const double lnB1 = use_atlas_tf1 ? 0.0 : beta_norm(beta1);
+  const double lnB2 = use_atlas_tf1 ? 0.0 : beta_norm(beta2);
+
+  auto prepare_lognormal = [&](double pt, int nprongs) {
+    if (use_atlas_tf1) return std::array<double,4>{};
+    const Params& p = params_for_nprongs(nprongs);
+    const double mu_v = mu(pt, p);
+    const double sig_v = sigma(pt, p);
+    const double c_v = shift_c(pt, p);
+    const double cdf_lo = lognormal_cdf(0.0, mu_v, sig_v, c_v);
+    const double cdf_hi = lognormal_cdf(theta_max_lognorm, mu_v, sig_v, c_v);
+    return std::array<double,4>{mu_v, sig_v, c_v, std::max(cdf_hi - cdf_lo, 1e-12)};
+  };
+  const auto lognormal1 = prepare_lognormal(tau1_use.Pt(), isLep1 ? -1 : n_charged_tracks_1);
+  const auto lognormal2 = prepare_lognormal(tau2_use.Pt(), isLep2 ? -1 : n_charged_tracks_2);
+  auto cached_lognormal_pdf = [](double theta, const std::array<double,4>& p) {
+    const double x = theta + p[2];
+    if (x <= 0.0 || theta < 0.0 || theta > theta_max_lognorm) return 0.0;
+    const double z = (std::log(x) - p[0]) / p[1];
+    const double logpdf = -std::log(x * p[1] * std::sqrt(2.0 * M_PI)) - 0.5 * z * z;
+    return std::exp(logpdf) / p[3];
+  };
+
+  std::vector<double> met_weights;
+  if (nsteps > 0 && nMETsteps > 0) {
+    met_weights.reserve(static_cast<size_t>(nMETsteps) * nMETsteps);
+    for (int k = 0; k < nMETsteps; ++k) {
+      const float sMET_x = MET_x - nMETsig * metres_x + k * dmetx;
+      for (int l = 0; l < nMETsteps; ++l) {
+        const float sMET_y = MET_y - nMETsig * metres_y + l * dmety;
+        const float dx = sMET_x - MET_x;
+        const float dy = sMET_y - MET_y;
+        const double log_w_met = -0.5 * (dx * dx * inv_metres_x2 + dy * dy * inv_metres_y2);
+        met_weights.push_back(std::exp(log_w_met));
+      }
+    }
+  }
+
   for (int i = 0; i < nsteps; i++) {
     const float phi1 = wrapToPi(phi1_c - PHI_WIN + (i + 0.5f) * dphi1);
+    const float sin_phi1 = std::sin(phi1);
+    const float cos_phi1 = std::cos(phi1);
 
     for (int j = 0; j < nsteps; j++) {
       const float phi2 = wrapToPi(phi2_c - PHI_WIN + (j + 0.5f) * dphi2);
+      const float sin_phi2 = std::sin(phi2);
+      const float cos_phi2 = std::cos(phi2);
 
       stats.n_phi_pairs++;
 
@@ -5877,14 +5743,11 @@ static std::vector<std::pair<float,float>> solve_ditau_MMC_METScan_para_perp_vis
 
           stats.n_met_points++;
 
-          const float dx = sMET_x - MET_x;
-          const float dy = sMET_y - MET_y;
-          const double log_w_met = -0.5 * (dx * dx * inv_metres_x2 + dy * dy * inv_metres_y2);
-          const double w_met = std::exp(log_w_met);
+          const double w_met = met_weights[static_cast<size_t>(k) * nMETsteps + l];
 
           // Solve pT1,pT2 from MET decomposition along phi1,phi2
-          float pT1 = csc_dphi * ( sMET_x * std::sin(phi2) - sMET_y * std::cos(phi2) );
-          float pT2 = -csc_dphi * ( sMET_x * std::sin(phi1) - sMET_y * std::cos(phi1) );
+          float pT1 = csc_dphi * ( sMET_x * sin_phi2 - sMET_y * cos_phi2 );
+          float pT2 = -csc_dphi * ( sMET_x * sin_phi1 - sMET_y * cos_phi1 );
 
           // Physical requirement: magnitudes positive -> makes wedge in MET / pT space 
           // i.e. force MET to lie in between the two proposed neutrino directions in the transverse plane
@@ -5900,20 +5763,20 @@ static std::vector<std::pair<float,float>> solve_ditau_MMC_METScan_para_perp_vis
 
             // IMPORTANT: use tau*_use with mass hypotheses to avoid inefficient solvers
             std::vector<float> pz1 = solve_pz_quadratic_tau(tau1_use, phi1, pT1, isLep1, n_charged_tracks_1, 0.0);
-            std::vector<float> pz2 = solve_pz_quadratic_tau(tau2_use, phi2, pT2, isLep2, n_charged_tracks_2, 0.0);
-
             if (pz1.empty()) { stats.n_pz1_empty++; continue; }
+
+            std::vector<float> pz2 = solve_pz_quadratic_tau(tau2_use, phi2, pT2, isLep2, n_charged_tracks_2, 0.0);
             if (pz2.empty()) { stats.n_pz2_empty++; continue; }
 
             for (float z1 : pz1) {
-              const float px1 = pT1 * std::cos(phi1);
-              const float py1 = pT1 * std::sin(phi1);
+              const float px1 = pT1 * cos_phi1;
+              const float py1 = pT1 * sin_phi1;
               const float E1  = std::sqrt(px1*px1 + py1*py1 + z1*z1); // no need to worry about mass hypothesis -> is 0 for hadhad
               TLorentzVector nu1; nu1.SetPxPyPzE(px1, py1, z1, E1);
 
               for (float z2 : pz2) {
-                const float px2 = pT2 * std::cos(phi2);
-                const float py2 = pT2 * std::sin(phi2);
+                const float px2 = pT2 * cos_phi2;
+                const float py2 = pT2 * sin_phi2;
                 const float E2  = std::sqrt(px2*px2 + py2*py2 + z2*z2); // no need to worry about mass hypothesis -> is 0 for hadhad
                 TLorentzVector nu2; nu2.SetPxPyPzE(px2, py2, z2, E2);
 
@@ -5943,14 +5806,14 @@ static std::vector<std::pair<float,float>> solve_ditau_MMC_METScan_para_perp_vis
                     (n_charged_tracks_2 <= 2) ? COEFFS_1PRONG_THESIS : COEFFS_3PRONG_THESIS;
                   //w_theta1 = theta_pdf_mixture_trunc(theta_3D_1, p_tau1, K1, THETA_MAX);
                   //w_theta2 = theta_pdf_mixture_trunc(theta_3D_2, p_tau2, K2, THETA_MAX);
-                  w_theta1 = lognormal_pdf_trunc(theta_3D_1, tau1_use.Pt(), n_charged_tracks_1);
-                  w_theta2 = lognormal_pdf_trunc(theta_3D_2, tau2_use.Pt(), n_charged_tracks_2);
+                  w_theta1 = cached_lognormal_pdf(theta_3D_1, lognormal1);
+                  w_theta2 = cached_lognormal_pdf(theta_3D_2, lognormal2);
 
                   if (w_theta1 <= 0.f || w_theta2 <= 0.f) { stats.n_theta_zero++; continue; }
                   const float r1 = (p_tau1 > 0.f) ? (nu1.P() / p_tau1) : 0.f;
                   const float r2 = (p_tau2 > 0.f) ? (nu2.P() / p_tau2) : 0.f;
-                  w_ratio1 = beta_pdf(r1, pick_beta(n_charged_tracks_1, isLep1, 1));
-                  w_ratio2 = beta_pdf(r2, pick_beta(n_charged_tracks_2, isLep2, 2));
+                  w_ratio1 = beta_pdf(r1, beta1, lnB1);
+                  w_ratio2 = beta_pdf(r2, beta2, lnB2);
                   if (w_ratio1 <= 0.f || w_ratio2 <= 0.f) { stats.n_theta_zero++; continue; }
                 }
                 const float w_miss = 1.f;
@@ -6012,14 +5875,14 @@ static std::vector<std::pair<float,float>> solve_ditau_MMC_METScan_para_perp_vis
               if (pz1.empty()) { stats.n_pz1_empty++; continue; }
 
               for (float z1 : pz1) {
-                const float px1 = pT1 * std::cos(phi1);
-                const float py1 = pT1 * std::sin(phi1);
+                const float px1 = pT1 * cos_phi1;
+                const float py1 = pT1 * sin_phi1;
                 const float E1  = std::sqrt(px1*px1 + py1*py1 + z1*z1 + m_scan*m_scan); // need missing mass included for leptonic legs
                 TLorentzVector nu1; nu1.SetPxPyPzE(px1, py1, z1, E1);
 
                 for (float z2 : pz2) {
-                  const float px2 = pT2 * std::cos(phi2);
-                  const float py2 = pT2 * std::sin(phi2);
+                  const float px2 = pT2 * cos_phi2;
+                  const float py2 = pT2 * sin_phi2;
                   const float E2  = std::sqrt(px2*px2 + py2*py2 + z2*z2);
                   TLorentzVector nu2; nu2.SetPxPyPzE(px2, py2, z2, E2);
 
@@ -6043,14 +5906,14 @@ static std::vector<std::pair<float,float>> solve_ditau_MMC_METScan_para_perp_vis
                     if (w[0] <= 0.f) { stats.n_theta_zero++; continue; }
                   } else {
                     
-                    w_theta1 = lognormal_pdf_trunc(theta_3D_1, tau1_use.Pt(), -1);
-                    w_theta2 = lognormal_pdf_trunc(theta_3D_2, tau2_use.Pt(), n_charged_tracks_2);
+                    w_theta1 = cached_lognormal_pdf(theta_3D_1, lognormal1);
+                    w_theta2 = cached_lognormal_pdf(theta_3D_2, lognormal2);
 
                     if (w_theta1 <= 0.f || w_theta2 <= 0.f) { stats.n_theta_zero++; continue; }
                     const float r1 = (p_tau1 > 0.f) ? (nu1.P() / p_tau1) : 0.f;
                     const float r2 = (p_tau2 > 0.f) ? (nu2.P() / p_tau2) : 0.f;
-                    w_ratio1 = beta_pdf(r1, pick_beta(n_charged_tracks_1, isLep1, 1));
-                    w_ratio2 = beta_pdf(r2, pick_beta(n_charged_tracks_2, isLep2, 2));
+                    w_ratio1 = beta_pdf(r1, beta1, lnB1);
+                    w_ratio2 = beta_pdf(r2, beta2, lnB2);
                     if (w_ratio1 <= 0.f || w_ratio2 <= 0.f) { stats.n_theta_zero++; continue; }
                   }
 
@@ -6111,14 +5974,14 @@ static std::vector<std::pair<float,float>> solve_ditau_MMC_METScan_para_perp_vis
               if (pz2.empty()) { stats.n_pz2_empty++; continue; }
 
               for (float z1 : pz1) {
-                const float px1 = pT1 * std::cos(phi1);
-                const float py1 = pT1 * std::sin(phi1);
+                const float px1 = pT1 * cos_phi1;
+                const float py1 = pT1 * sin_phi1;
                 const float E1  = std::sqrt(px1*px1 + py1*py1 + z1*z1);
                 TLorentzVector nu1; nu1.SetPxPyPzE(px1, py1, z1, E1);
 
                 for (float z2 : pz2) {
-                  const float px2 = pT2 * std::cos(phi2);
-                  const float py2 = pT2 * std::sin(phi2);
+                  const float px2 = pT2 * cos_phi2;
+                  const float py2 = pT2 * sin_phi2;
                   const float E2  = std::sqrt(px2*px2 + py2*py2 + z2*z2 + m_scan*m_scan);
                   TLorentzVector nu2; nu2.SetPxPyPzE(px2, py2, z2, E2);
 
@@ -6141,14 +6004,14 @@ static std::vector<std::pair<float,float>> solve_ditau_MMC_METScan_para_perp_vis
                     w_theta1 = w[1]; w_theta2 = w[2]; w_ratio1 = w[3]; w_ratio2 = w[4];
                     if (w[0] <= 0.f) { stats.n_theta_zero++; continue; }
                   } else {
-                    w_theta1 = lognormal_pdf_trunc(theta_3D_1, tau1_use.Pt(), n_charged_tracks_1);
-                    w_theta2 = lognormal_pdf_trunc(theta_3D_2, tau2_use.Pt(), -1);
+                    w_theta1 = cached_lognormal_pdf(theta_3D_1, lognormal1);
+                    w_theta2 = cached_lognormal_pdf(theta_3D_2, lognormal2);
 
                     if (w_theta1 <= 0.f || w_theta2 <= 0.f) { stats.n_theta_zero++; continue; }
                     const float r1 = (p_tau1 > 0.f) ? (nu1.P() / p_tau1) : 0.f;
                     const float r2 = (p_tau2 > 0.f) ? (nu2.P() / p_tau2) : 0.f;
-                    w_ratio1 = beta_pdf(r1, pick_beta(n_charged_tracks_1, isLep1, 1));
-                    w_ratio2 = beta_pdf(r2, pick_beta(n_charged_tracks_2, isLep2, 2));
+                    w_ratio1 = beta_pdf(r1, beta1, lnB1);
+                    w_ratio2 = beta_pdf(r2, beta2, lnB2);
                     if (w_ratio1 <= 0.f || w_ratio2 <= 0.f) { stats.n_theta_zero++; continue; }
                   }
                   
@@ -6267,3 +6130,84 @@ MMCSolutionsAndWeights AnalysisFCChh::solve_ditau_MMC_METScan_para_perp_vispTang
   return {std::move(solutions), std::move(weight_components)};
 }
 
+std::vector<std::pair<float,float>> AnalysisFCChh::reweight_mditau_components(
+  const std::vector<std::array<float,8>>& components,
+  bool use_met,
+  bool use_theta,
+  bool use_ratio,
+  bool use_miss
+)
+{
+  std::vector<std::pair<float,float>> out;
+  out.reserve(components.size());
+
+  for (const auto& c : components) {
+    float w = 1.f;
+    if (use_met)   w *= c[1];
+    if (use_theta) w *= c[2] * c[3];
+    if (use_ratio) w *= c[4] * c[5];
+    if (use_miss)  w *= c[6];
+    out.push_back({c[0], w});
+  }
+  return out;
+}
+
+
+double AnalysisFCChh::weighted_mode_from_mw(
+    const std::vector<std::pair<float,float>>& mw_log, // {mass, log_weight}
+    int nbins, double xmin, double xmax,
+    bool refine_peak,
+    bool toWeight     
+)
+{
+  if (nbins <= 0 || !(xmax > xmin)) 
+      return std::numeric_limits<double>::quiet_NaN();
+
+  double max_logw = -std::numeric_limits<double>::infinity();
+  if (toWeight) {
+    for (const auto& [m, lw] : mw_log) {
+      if (!std::isfinite(m) || !std::isfinite(lw)) continue;
+      if (m < xmin || m >= xmax) continue;
+      if (lw > max_logw) max_logw = lw;
+    }
+    if (!std::isfinite(max_logw))
+        return std::numeric_limits<double>::quiet_NaN();
+  }
+
+  TH1D h("h_mmmc", ";m_{#tau#tau} [GeV];weighted entries", nbins, xmin, xmax);
+  h.SetDirectory(nullptr);
+
+  for (const auto& [m, lw] : mw_log) {
+    if (!std::isfinite(m) || !std::isfinite(lw)) continue;
+    if (m < xmin || m >= xmax) continue;
+
+    double w = 1.0;
+    if (toWeight) {
+      w = std::exp(static_cast<double>(lw) - max_logw);
+      if (!(w > 0.0)) continue;
+    }
+
+    h.Fill(m, w);
+  }
+
+  const int ibin_max = h.GetMaximumBin();
+  if (ibin_max <= 0) return std::numeric_limits<double>::quiet_NaN();
+
+  double mode = h.GetBinCenter(ibin_max);
+
+  // optional parabolic interpolation
+  if (refine_peak && ibin_max > 1 && ibin_max < nbins) {
+    const double yL = h.GetBinContent(ibin_max - 1);
+    const double yC = h.GetBinContent(ibin_max);
+    const double yR = h.GetBinContent(ibin_max + 1);
+    const double denom = (yL - 2.0*yC + yR);
+    if (std::abs(denom) > 1e-12) {
+      const double dx   = h.GetBinWidth(ibin_max);
+      const double frac = 0.5 * (yL - yR) / denom;
+      const double frac_clamped = std::max(-0.5, std::min(0.5, frac));
+      mode = h.GetBinCenter(ibin_max) + frac_clamped * dx;
+    }
+  }
+
+  return mode;
+}

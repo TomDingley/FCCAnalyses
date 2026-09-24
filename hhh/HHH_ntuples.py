@@ -631,7 +631,7 @@ class Analysis():
                 .Define("phi_reco_matched_leading_mu_fromH_selmu", "FCCAnalyses::ReconstructedParticle::get_phi(reco_matched_leading_mu_fromH_selmu)[0]")
 
                 
-                .Define("truth_higgs", "AnalysisFCChh::get_truth_Higgs(mc_particles, mc_daughters, \"hhh\")")
+                .Define("truth_higgs", "AnalysisFCChh::get_truth_HHH_Higgses(mc_particles, mc_daughters, \"hhh\")")
                 .Define("truth_hhh_higgs", "std::get<0>(truth_higgs)")
                 .Define("truth_hhh_pairs", "std::get<1>(truth_higgs)")
 
@@ -1003,17 +1003,25 @@ class Analysis():
                 .Define("OS_taue", "charge_tau_1 * el1_charge < 0") # opposite sign e-tau pair
 
                 
-                .Define("best_tautau_TLVs", "AnalysisFCChh::get_Htautau_vis_exclusive_TLVs(sel_eta_tau_med, n_tau_jets_medium, sel_el_0p2, n_sel_el_0p2, sort_sel_mu, n_sel_mu)")
-                .Define("m_tautau_vis_OS", "best_tautau_TLVs[2].M()")
+                # Select the tau pair once. The result contains both reconstructed
+                # constituents, their combined TLV, and the two lepton flags.
+                .Define("best_tautau_Recos",
+                        "AnalysisFCChh::get_Htautau_vis_exclusive_recoTLV(sel_eta_tau_med, sel_el_0p2, sort_sel_mu)")
+                .Define("tau_1_reco", "std::get<0>(best_tautau_Recos)")
+                .Define("tau_2_reco", "std::get<1>(best_tautau_Recos)")
+                .Define("htau_tlv", "std::get<2>(best_tautau_Recos)")
+                .Define("isLep1", "std::get<3>(best_tautau_Recos)")
+                .Define("isLep2", "std::get<4>(best_tautau_Recos)")
+                .Define("tau_1_tlv_LH", "AnalysisFCChh::getTLV_reco(tau_1_reco)")
+                .Define("tau_2_tlv_LH", "AnalysisFCChh::getTLV_reco(tau_2_reco)")
+                .Define("m_tautau_vis_OS", "htau_tlv.M()")
                  # define sigma parameters
-                .Define("sigma", "AnalysisFCChh::compute_sigma(h1_tlv_dR, h2_tlv_dR, best_tautau_TLVs[2])")
+                .Define("sigma", "AnalysisFCChh::compute_sigma(h1_tlv_dR, h2_tlv_dR, htau_tlv)")
                 .Define("sigma_12", "sigma[0]")
                 .Define("sigma_23", "sigma[1]")
                 .Define("sigma_13", "sigma[2]")
                 .Define("sigma_x", "sigma_23 + 0.5 * sigma_13")
                 .Define("sigma_y", "0.866 * sigma_13")
-                .Define("tau_1_tlv_LH", "best_tautau_TLVs[0]")
-                .Define("tau_2_tlv_LH", "best_tautau_TLVs[1]")
                 .Define("pT_tau1_tlv_LH", "tau_1_tlv_LH.Pt()")
                 .Define("pT_tau2_tlv_LH", "tau_2_tlv_LH.Pt()")
                 
@@ -1047,21 +1055,11 @@ class Analysis():
                 .Define("m_tautau_mT", "AnalysisFCChh::mT_tautau(tau_1_tlv_LH, tau_2_tlv_LH, MET_x, MET_y)")
                 .Define("m_tautau_col", "AnalysisFCChh::ditau_mass_collinear(tau_1_tlv_LH, tau_2_tlv_LH,  MET_x, MET_y)")
                 
-                .Define("best_tautau_Recos", 
-                        "AnalysisFCChh::get_Htautau_vis_exclusive_recoTLV(sel_eta_tau_med, sel_el_0p2, sort_sel_mu)")
-                .Define("tau_1_reco", "std::get<0>(best_tautau_Recos)")
-                .Define("tau_2_reco", "std::get<1>(best_tautau_Recos)")
-                .Define("isLep1", "std::get<3>(best_tautau_Recos)")
-                .Define("isLep2", "std::get<4>(best_tautau_Recos)")
                 .Define("tautau_candidates", "ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
                         "tau_1_reco, tau_2_reco}")
                 .Define("thrust", "AnalysisFCChh::thrust(sel_eta_b_med, tautau_candidates)")
                 .Define("sphericity", "AnalysisFCChh::sphericity(sel_eta_b_med, tautau_candidates)")
                 .Define("aplanarity", "AnalysisFCChh::aplanarity(sel_eta_b_med, tautau_candidates)")
-
-                
-                .Define("htau_tlv", "best_tautau_TLVs[2]")
-                
                 # when requiring two taus
                 # tau track association
                 .Alias("RP_trk_index", "_ReconstructedParticles_tracks.index")
@@ -1471,3 +1469,24 @@ class Analysis():
         ]
         
         return branchList
+
+
+def define_mmc_comparison(dframe):
+    """Opt-in validation columns; apply Range(10) AFTER the event selection.
+
+    Leaves the production MMC columns unchanged. Both versions use the same
+    existing mass estimator (which currently interprets ordinary weights as logs).
+    """
+    args = (
+        "tau_1_tlv_LH, tau_2_tlv_LH, isLep1, isLep2, n_prongs_tau1, n_prongs_tau2, "
+        "MET_x, MET_y, 50, d_MET_x_derived, d_MET_y_derived, 4, 50, 30, "
+        "n_b_jets_medium_tauprio, n_tau_jets_medium, false, 10"
+    )
+    return (dframe
+        .Define("MMC_compare_old", "AnalysisFCChh::solve_ditau_MMC_METScan_para_perp_vispTanglecalibration_weights(" + args + ")")
+        .Define("MMC_compare_new", "AnalysisFCChh::solve_ditau_MMC_METScan_para_perp_vispTanglecalibration_weights_v2(" + args + ")")
+        .Define("MMC_mass_old", "AnalysisFCChh::weighted_mode_from_mw(MMC_compare_old.first, 800, 0, 400, false, true)")
+        .Define("MMC_mass_new", "AnalysisFCChh::weighted_mode_from_mw(MMC_compare_new.first, 800, 0, 400, false, true)")
+        .Define("MMC_mass_delta", "MMC_mass_new - MMC_mass_old")
+        .Define("MMC_nsolutions_old", "MMC_compare_old.first.size()")
+        .Define("MMC_nsolutions_new", "MMC_compare_new.first.size()"))
