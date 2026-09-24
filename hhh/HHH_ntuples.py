@@ -431,8 +431,6 @@ class Analysis():
                 .Define("n_tau_tagged_bs", "FCCAnalyses::ReconstructedParticle::get_n(tau_tagged_bs)")
                 
                 # also look for jets that contain both b and taus
-                .Define("b_tau_shared_jet", "AnalysisFCChh::find_reco_matches_both(truth_b_selpt, truth_tau_selpt, selected_jets, dR_match)")
-                .Define("n_b_tau_shared_jet", "FCCAnalyses::ReconstructedParticle::get_n(b_tau_shared_jet)")
                 
                 .Define("b_tau_shared_jet_0p3", "AnalysisFCChh::find_reco_matches_both(truth_b_selpt, truth_tau_selpt, selected_jets, 0.3)")
                 .Define("n_b_tau_shared_jet_0p3", "FCCAnalyses::ReconstructedParticle::get_n(b_tau_shared_jet_0p3)")
@@ -631,7 +629,7 @@ class Analysis():
                 .Define("phi_reco_matched_leading_mu_fromH_selmu", "FCCAnalyses::ReconstructedParticle::get_phi(reco_matched_leading_mu_fromH_selmu)[0]")
 
                 
-                .Define("truth_higgs", "AnalysisFCChh::get_truth_HHH_Higgses(mc_particles, mc_daughters, \"hhh\")")
+                .Define("truth_higgs", "AnalysisFCChh::get_truth_HHH_Higges(mc_particles, mc_daughters, \"hhh\")")
                 .Define("truth_hhh_higgs", "std::get<0>(truth_higgs)")
                 .Define("truth_hhh_pairs", "std::get<1>(truth_higgs)")
 
@@ -1171,8 +1169,8 @@ class Analysis():
                 .Define("dR_H2Htau", "ROOT::Math::VectorUtil::DeltaR(h2_tlv_dR, htau_tlv)")
 
                 .Define("dEta_H1H2", "h1_tlv_dR.Eta() - h2_tlv_dR.Eta()")
-                .Define("dEta_H1Htau", "h2_tlv_dR.Eta() - htau_tlv.Eta()")
-                .Define("dEta_H2Htau", "h1_tlv_dR.Eta() - htau_tlv.Eta()")
+                .Define("dEta_H1Htau", "h1_tlv_dR.Eta() - htau_tlv.Eta()")
+                .Define("dEta_H2Htau", "h2_tlv_dR.Eta() - htau_tlv.Eta()")
                 
                 .Define("dPhi_H1H2", "ROOT::Math::VectorUtil::DeltaPhi(h1_tlv_dR, h2_tlv_dR)")
                 .Define("dPhi_H1Htau", "ROOT::Math::VectorUtil::DeltaPhi(h1_tlv_dR, htau_tlv)")
@@ -1216,8 +1214,6 @@ class Analysis():
                         "AnalysisFCChh::weighted_mode_from_mw(MMC_solutions_vispTcal, 800, 0, 400, false, false)")
                 .Define("weighted_MMC_para_perp_vispTcal",
                         "AnalysisFCChh::weighted_mode_from_mw(MMC_solutions_vispTcal, 800, 0, 400, false, true)")
-                .Define("weighted_MMC_atlasstyle_vispTcal",
-                        "AnalysisFCChh::atlas_style_mmc_mass(MMC_solutions_vispTcal, 1500, 0, 3000, false, 5, false)")
                 .Define("metOnly_mode_vispTcal",
                         "AnalysisFCChh::weighted_mode_from_mw(MMC_metOnly_vispTcal, 800, 0, 400, false, true)")
                 .Define("metRatio_mode_vispTcal",
@@ -1322,9 +1318,7 @@ class Analysis():
                 
                 "sigma_12", "sigma_23", "sigma_13",
                 "sigma_x", "sigma_y",
-                "m_hhh_vis_LR",
-                "isRecoMatchedHHH_LR",
-                "n_PF08_jets_sel","n_bb_tagged_08Jets","n_tautau_tagged_08Jets",
+                "n_PF08_jets_sel","n_bb_tagged_08Jets",
                 "n_selected_b_tagged_trackJets_medium",
                 "MET_x", "MET_y",
                 
@@ -1463,30 +1457,9 @@ class Analysis():
                 "pT_b1", "pT_b2", "pT_b3", "pT_b4",
                 "aplanarity", "sphericity", "thrust",
                 "MET", 
-                "m_tautau_vis_OS"
+                "m_tautau_vis_OS",
                 "weighted_MMC_para_perp_vispTcal",
                 
         ]
         
         return branchList
-
-
-def define_mmc_comparison(dframe):
-    """Opt-in validation columns; apply Range(10) AFTER the event selection.
-
-    Leaves the production MMC columns unchanged. Both versions use the same
-    existing mass estimator (which currently interprets ordinary weights as logs).
-    """
-    args = (
-        "tau_1_tlv_LH, tau_2_tlv_LH, isLep1, isLep2, n_prongs_tau1, n_prongs_tau2, "
-        "MET_x, MET_y, 50, d_MET_x_derived, d_MET_y_derived, 4, 50, 30, "
-        "n_b_jets_medium_tauprio, n_tau_jets_medium, false, 10"
-    )
-    return (dframe
-        .Define("MMC_compare_old", "AnalysisFCChh::solve_ditau_MMC_METScan_para_perp_vispTanglecalibration_weights(" + args + ")")
-        .Define("MMC_compare_new", "AnalysisFCChh::solve_ditau_MMC_METScan_para_perp_vispTanglecalibration_weights_v2(" + args + ")")
-        .Define("MMC_mass_old", "AnalysisFCChh::weighted_mode_from_mw(MMC_compare_old.first, 800, 0, 400, false, true)")
-        .Define("MMC_mass_new", "AnalysisFCChh::weighted_mode_from_mw(MMC_compare_new.first, 800, 0, 400, false, true)")
-        .Define("MMC_mass_delta", "MMC_mass_new - MMC_mass_old")
-        .Define("MMC_nsolutions_old", "MMC_compare_old.first.size()")
-        .Define("MMC_nsolutions_new", "MMC_compare_new.first.size()"))

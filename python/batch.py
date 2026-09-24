@@ -3,6 +3,7 @@ Submitting to the HTCondor batch system.
 '''
 
 import os
+import shlex
 import sys
 import time
 import logging
@@ -136,7 +137,9 @@ def create_subjob_script(config: dict[str, Any],
     scr = '#!/bin/bash\n\n'
 
     scr += f'source {config["key4hep-stack"]}\n'
-    scr += "source /data/atlas/users/dingleyt/FCChh/FCCAnalyses/setup.sh\n"
+    if config["fccana-dir"] is not None:
+        setup_path = os.path.join(config["fccana-dir"], "setup.sh")
+        scr += f"source {shlex.quote(setup_path)}\n"
 
     scr += f'mkdir -p {sample_name}\n\n'
 
@@ -424,7 +427,7 @@ def send_to_batch(args: argparse.Namespace,
     # Find location of the FCCanalyses directory, if locally build
     config['fccana-dir'] = None
     if 'FCCANA_LOCAL_DIR' in os.environ:
-        config['fccana-dir'] = os.getcwd()
+        config['fccana-dir'] = os.path.realpath(os.environ['FCCANA_LOCAL_DIR'])
 
     # Find out the exact Key4hep stack being sourced
     config['key4hep-stack'] = os.environ['KEY4HEP_STACK']

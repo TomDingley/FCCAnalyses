@@ -21,6 +21,8 @@ if [ "${0}" != "${BASH_SOURCE}" ]; then
   fi
 
   echo "----> INFO: Setting up environment variables..."
+  export FCCANA_LOCAL_DIR="${LOCAL_DIR}"
+  export FCCANALYSES_JET_RESPONSE_MAP="${LOCAL_DIR}/data/jet_response_maps.root"
   export PYTHONPATH=${LOCAL_DIR}/python:${PYTHONPATH}
   export PYTHONPATH=${LOCAL_DIR}/install/python:${PYTHONPATH}
   export PYTHONPATH=${LOCAL_DIR}/install/share/examples:${PYTHONPATH}

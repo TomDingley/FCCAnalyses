@@ -4,6 +4,10 @@
 #ifndef ANALYSIS_FCCHH_ANALYZERS_H
 #define ANALYSIS_FCCHH_ANALYZERS_H
 
+#include <array>
+#include <tuple>
+#include <vector>
+#include <utility>
 #include "ROOT/RVec.hxx"
 #include "TLorentzVector.h"
 #include "TString.h"
@@ -16,6 +20,51 @@
 #include <iostream>
 
 namespace AnalysisFCChh {
+
+std::array<float,5> atlas_tf1_weights(
+  const TLorentzVector& tau1_vis,
+  const TLorentzVector& nu1,
+  bool isLep1,
+  int n_charged_tracks_1,
+  bool isLead1,
+  const TLorentzVector& tau2_vis,
+  const TLorentzVector& nu2,
+  bool isLep2,
+  int n_charged_tracks_2,
+  bool isLead2
+);
+
+
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
+find_reco_matches_both(
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_set1,
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_set2,
+    const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& reco_particles,
+    float dR_thres);
+
+
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
+find_bb_tagged(
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> LR_jets,
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> b_tagged_track_jets);
+
+
+int nSignalContaminated(
+  ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_b_hadrons,
+  ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_taus,
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> selected_jets,
+  float dR_truth
+);
+
+
+bool hasZParent(
+    edm4hep::MCParticleData truth_part,
+    ROOT::VecOps::RVec<podio::ObjectID> parent_ids,
+    ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles);
+
+
+bool isElectron(edm4hep::MCParticleData truth_part);
+
 
 /// TESTER: return the transverse momenta of the input ReconstructedParticles
 // ROOT::VecOps::RVec<float>
@@ -555,7 +604,7 @@ ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> select_with_mask(
 std::pair<
   ROOT::VecOps::RVec<edm4hep::MCParticleData>,
   ROOT::VecOps::RVec<std::pair<edm4hep::MCParticleData, edm4hep::MCParticleData>>
-> get_truth_Higgs(
+> get_truth_HHH_Higges(
     ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles,
     ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
     TString decay
@@ -607,7 +656,21 @@ int WWlvlvFilter_HHH(
     ROOT::VecOps::RVec<podio::ObjectID> parent_ids
 );
 
-std::array<AnalysisFCChh::TauAngleRecord, 2> matchTwoTruthTwoRecoAndAngles(
+struct TauAngleRecord {
+  bool  matched{false};
+  int   truth_idx{-1};      // 0 or 1
+  int   reco_idx{-1};       // 0 or 1 if matched
+
+  float dR_best{999.f};
+  float pt_reco{-1.f};
+
+  float theta_tt{-1.f};     // angle(truth_vis, truth_miss)
+  float theta_rt{-1.f};     // angle(reco_vis,  truth_miss)
+
+  int   n_prongs_truth{-1};
+};
+
+std::array<TauAngleRecord, 2> matchTwoTruthTwoRecoAndAngles(
     const TLorentzVector& pvis_truth_0,
     const TLorentzVector& pmiss_truth_0,
     int nprongs_truth_0,
@@ -638,21 +701,12 @@ HiggsCandidateResult getHiggsCandidates(
   float target_mass2
 );
 
-ROOT::VecOps::RVec<TLorentzVector> get_Htautau_vis_exclusive_TLVs(
-  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& tauJets,
-  int n_tau,
-  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& electrons,
-  int n_el,
-  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& muons,
-  int n_mu
-);
-
 std::tuple<
-  edm4hep::ReconstructedParticleData, // lead constituent
-  edm4hep::ReconstructedParticleData, // sublead constituent
+  edm4hep::ReconstructedParticleData, // constituent 1
+  edm4hep::ReconstructedParticleData, // constituent 2
   TLorentzVector,                      // visible H→tautau
-  bool, // return if tau1 is a lepton or not
-  bool // return if tau2 is a lepton or not
+  bool,                                // constituent 1 is an electron or muon
+  bool                                 // constituent 2 is an electron or muon
 > get_Htautau_vis_exclusive_recoTLV(
   const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& tauJets,
   const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& electrons,

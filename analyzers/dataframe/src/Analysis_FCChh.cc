@@ -2,8 +2,189 @@
 // #include "FCCAnalyses/lester_mt2_bisect.h"
 
 #include <iostream>
+#include "TVector2.h"
+#include "TMatrixDSym.h"
+#include "TMatrixDSymEigen.h"
+#include "TFile.h"
+#include "TH2D.h"
+#include "TH1D.h"
+#include "TF1.h"
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <numeric>
+#include <cstdlib>
+#include <stdexcept>
+
 
 using namespace AnalysisFCChh;
+
+static inline float deltaPhi(float phi1, float phi2);
+
+inline bool isBHadronPDG(int pdgabs) {
+  return (pdgabs >= 500 && pdgabs < 600) || (pdgabs >= 5000 && pdgabs < 6000);
+}
+
+bool hasBHadronDaughter(const edm4hep::MCParticleData& p,
+                        const ROOT::VecOps::RVec<podio::ObjectID>& daughter_ids,
+                        const ROOT::VecOps::RVec<edm4hep::MCParticleData>& parts) {
+  for (int i = p.daughters_begin; i < p.daughters_end; ++i) {
+    const auto& d = parts.at(daughter_ids.at(i).index);
+    if (isBHadronPDG(std::abs(d.PDG))) return true;
+  }
+  return false;
+}
+
+bool AnalysisFCChh::isElectron(edm4hep::MCParticleData truth_part) {
+  auto pdg_id = truth_part.PDG;
+  // std::cout << "pdg id of truth part is" << pdg_id << std::endl;
+  if (abs(pdg_id) == 11) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+bool AnalysisFCChh::hasZParent(
+    edm4hep::MCParticleData truth_part,
+    ROOT::VecOps::RVec<podio::ObjectID> parent_ids,
+    ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles) {
+
+  // cannot use the podio getParents fct, need to implement manually:
+  auto first_parent_index = truth_part.parents_begin;
+  auto last_parent_index = truth_part.parents_end;
+
+  // loop over all parents (usually only 1, but sometimes more for reasons not
+  // understood?):
+  for (int parent_i = first_parent_index; parent_i < last_parent_index;
+       parent_i++) {
+    // first get the index from the parent
+    auto parent_MC_index = parent_ids.at(parent_i).index;
+
+    // then go back to the original vector of MCParticles
+    auto parent = truth_particles.at(parent_MC_index);
+
+    if (isZ(parent)) {
+      std::cout << "Found Z parent of the tau as:" << parent.PDG << std::endl;
+      std::cout << "Found PDG parent " << parent.PDG << " with daughter of PDG ID " << truth_part.PDG << std::endl;
+      return true;
+    }
+    return hasZParent(parent, parent_ids, truth_particles);
+  }
+
+  return false;
+}
+
+int AnalysisFCChh::nSignalContaminated(
+  ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_b_hadrons,
+  ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_taus,
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> selected_jets,
+  float dR_truth
+)
+{
+  int nContam = 0;
+
+  for (auto jet : selected_jets) {
+    TLorentzVector jet_tlv = getTLV_reco(jet);
+    // now loop over both sets of truth particles, make TLVs and look at separations
+    for (auto b : truth_b_hadrons) {
+      TLorentzVector b_tlv = getTLV_MC(b);
+      float dr_b_jet = jet_tlv.DeltaR(b_tlv);
+
+      for (auto tau : truth_taus) {
+        TLorentzVector tau_tlv = getTLV_MC(tau);
+        float dr_tau_jet = jet_tlv.DeltaR(tau_tlv);
+        if ((dr_tau_jet < dR_truth) & (dr_b_jet < dR_truth)) {
+          nContam++;
+        }
+
+      }
+    }
+  }
+  return nContam;
+
+
+}
+
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
+AnalysisFCChh::find_bb_tagged(
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> LR_jets,
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> b_tagged_track_jets)
+{
+  // define output vector of double b-tagging LR jets
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> bb_jets;
+
+  // loop over LR_jets
+  for (auto &LR_jet : LR_jets) {
+    // construct TLV for LR_jet
+    TLorentzVector TLV_LR_jet = getTLV_reco(LR_jet);
+
+    // counter for b-tags in LR jet
+    int n_bs = 0;
+
+    // now loop over all track jets
+    for (auto &track_jet : b_tagged_track_jets) {
+      // construct TLV for track jet
+      TLorentzVector TLV_track_jet = getTLV_reco(track_jet);
+      // compute dR between LR jet and track jet
+      float dR_track_jet_PF = TLV_LR_jet.DeltaR(TLV_track_jet);
+
+      // if this track jet is within 0.8, consider it a constituent
+      if (dR_track_jet_PF < 0.8) {
+        n_bs++;
+      }
+
+    }
+    if (n_bs == 2) {
+      std::cout << "Found 2 b-jets " << n_bs << std::endl;
+      bb_jets.push_back(LR_jet);
+    }
+
+  }
+  return bb_jets;
+}
+
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
+AnalysisFCChh::find_reco_matches_both(
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_set1,
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData>& truth_set2,
+    const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& reco_particles,
+    float dR_thres)
+{
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> out;
+  if (truth_set1.empty() || truth_set2.empty() || reco_particles.empty()) return out;
+
+  // Precompute TLVs
+  std::vector<TLorentzVector> tlv_reco; tlv_reco.reserve(reco_particles.size());
+  for (const auto& r : reco_particles) tlv_reco.emplace_back(getTLV_reco(r));
+
+  std::vector<TLorentzVector> tlv_truth1; tlv_truth1.reserve(truth_set1.size());
+  for (const auto& t : truth_set1) tlv_truth1.emplace_back(getTLV_MC(t));
+
+  std::vector<TLorentzVector> tlv_truth2; tlv_truth2.reserve(truth_set2.size());
+  for (const auto& t : truth_set2) tlv_truth2.emplace_back(getTLV_MC(t));
+
+  // Loop over reco jets: keep only if matched to both sets
+  for (size_t ir = 0; ir < reco_particles.size(); ++ir) {
+    bool match1 = false, match2 = false;
+
+    for (const auto& tv1 : tlv_truth1) {
+      if (tv1.DeltaR(tlv_reco[ir]) < dR_thres) { match1 = true; break; }
+    }
+    for (const auto& tv2 : tlv_truth2) {
+      if (tv2.DeltaR(tlv_reco[ir]) < dR_thres) { match2 = true; break; }
+    }
+
+    if (match1 && match2) {
+      out.emplace_back(reco_particles[ir]);
+    }
+  }
+
+  return out;
+}
 
 // truth filter helper functions:
 bool AnalysisFCChh::isStablePhoton(edm4hep::MCParticleData truth_part) {
@@ -4007,7 +4188,7 @@ std::pair<
   ROOT::VecOps::RVec<edm4hep::MCParticleData>,
   ROOT::VecOps::RVec<std::pair<edm4hep::MCParticleData, edm4hep::MCParticleData>>
 >
-AnalysisFCChh::get_truth_HHH_Higgses(
+AnalysisFCChh::get_truth_HHH_Higges(
     ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles,
     ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
     TString decay)
@@ -4421,6 +4602,15 @@ inline float safeAngle3D(const TLorentzVector& a, const TLorentzVector& b) {
 }
 
 
+inline AnalysisFCChh::TauAngleRecord makeBaseRecord(
+    int tidx, int npr, const TLorentzVector& pvis_t, const TLorentzVector& pmiss_t) {
+  AnalysisFCChh::TauAngleRecord r;
+  r.truth_idx = tidx;
+  r.n_prongs_truth = npr;
+  r.theta_tt = safeAngle3D(pvis_t, pmiss_t);
+  return r;
+}
+
 std::array<AnalysisFCChh::TauAngleRecord, 2>
 AnalysisFCChh::matchTwoTruthTwoRecoAndAngles(
     const TLorentzVector& pvis_truth_0,
@@ -4488,28 +4678,22 @@ AnalysisFCChh::matchTwoTruthTwoRecoAndAngles(
 // Only used in MMC to improve efficiency of more asymmetric events
 inline double get_sigma_rel_from_map(double pt, double abs_eta)
 {
-  // Static so the file and hist are loaded only once.
-  static bool   initialized = false;
-  static TFile* f_maps      = nullptr;
-  static TH2D*  h_sigma_rel = nullptr;
-
-  if (!initialized)
-  {
-    initialized = true;
-    // Adjust path/name to whatever you actually use
-    f_maps = TFile::Open("/data/atlas/users/dingleyt/FCChh/FCCAnalyses/jet_response_maps.root", "READ");
-    if (!f_maps || f_maps->IsZombie()) {
-      std::cerr << "[get_sigma_rel_from_map] ERROR: cannot open jet_response_maps.root\n";
-      h_sigma_rel = nullptr;
-      return 0.0;
+  // Load once, detach the histogram, and close the calibration file.
+  static const std::unique_ptr<TH2D> h_sigma_rel = [] {
+    const char* override_path = std::getenv("FCCANALYSES_JET_RESPONSE_MAP");
+    const char* path = (override_path && *override_path)
+      ? override_path : "data/jet_response_maps.root";
+    std::unique_ptr<TFile> file(TFile::Open(path, "READ"));
+    if (!file || file->IsZombie()) {
+      throw std::runtime_error(std::string("Cannot open jet-response calibration: ") + path);
     }
-
-    // Combined relative pT resolution map
-    h_sigma_rel = dynamic_cast<TH2D*>(f_maps->Get("all_sigma_rel"));
-    if (!h_sigma_rel) {
-      std::cerr << "[get_sigma_rel_from_map] ERROR: histogram all_sigma_rel not found in jet_response_maps.root\n";
+    auto* hist = dynamic_cast<TH2D*>(file->Get("all_sigma_rel"));
+    if (!hist) {
+      throw std::runtime_error(std::string("Missing all_sigma_rel histogram in: ") + path);
     }
-  }
+    hist->SetDirectory(nullptr);
+    return std::unique_ptr<TH2D>(hist);
+  }();
 
   int binx = h_sigma_rel->GetXaxis()->FindBin(pt);
   int biny = h_sigma_rel->GetYaxis()->FindBin(abs_eta);
@@ -5350,6 +5534,202 @@ int AnalysisFCChh::find_hhh_signal_match(
   // Bit flags: 2 = at least two tau matches, 4 = at least four B matches.
   return (nTau_matched >= 2 ? 2 : 0) | (nB_matched >= 4 ? 4 : 0);
 }
+
+constexpr double M_TAU = 1.77686;
+
+struct Params { double m0, m1, s0, s1, c0, c1; };
+
+static constexpr double theta_max_lognorm = 0.125; // rad
+
+// 0‑prong (lep)
+static constexpr Params P_LEP{
+  -3.1427396862566863,  -0.23064074685568436,
+  -0.1444890870687475,   0.1181859898431094,
+  -13.812019296033004,   0.012060181926359414
+};
+
+// 1‑prong
+static constexpr Params P_1P{
+  -2.5618981829580747,  -0.23200455632017555,
+    0.29105380432423994,  0.004788320942230688,
+  -13.81585340322015,   -0.0014075505863843064
+};
+
+// 3‑prong
+static constexpr Params P_3P{
+  -4.514775603668456,    0.22546005420743231,
+  -0.3428670208948243,   0.18177782151813016,
+  -13.818297545084299,  -0.00882179217482995
+};
+
+inline const Params& params_for_nprongs(int nprongs) {
+  if (nprongs <= 2 && nprongs >= 0) return P_1P;
+  if (nprongs >= 3) return P_3P;
+  return P_LEP;
+}
+
+inline double mu(double pt, const Params& p) {
+  return p.m0 + p.m1 * std::log(std::max(pt, 1e-6));
+}
+inline double sigma(double pt, const Params& p) {
+  return std::exp(std::min(std::max(p.s0 + p.s1 * std::log(std::max(pt, 1e-6)), -10.0), 5.0));
+}
+inline double shift_c(double pt, const Params& p) {
+  return std::exp(std::min(std::max(p.c0 + p.c1 * std::log(std::max(pt, 1e-6)), -20.0), 5.0));
+}
+
+struct MixCoeffs {
+  float b0, b1, b2;  // logit(pi) = b0 + b1 ln p + b2 (ln p)^2
+  float c0, c1;      // mu_G = exp(c0 + c1 ln p)
+  float d0, d1;      // sig_G = exp(d0 + d1 ln p)
+  float e0, e1;      // mu_L = exp(e0 + e1 ln p)
+  float f0, f1;      // sig_L = exp(f0 + f1 ln p)
+};
+static const MixCoeffs COEFFS_1PRONG_THESIS{
+  -8.24133814f,  3.52463730f, -0.36326607f,
+   0.88118047f, -0.98673942f,
+  -0.03353991f, -0.98704956f,
+   1.08335148f, -0.98403806f,
+  -0.89737468f, -0.92882386f
+};
+static const MixCoeffs COEFFS_3PRONG_THESIS{
+  -0.63506705f, -0.64607196f,  0.06512885f,
+  -0.30908537f, -0.96600377f,
+  -1.73227246f, -0.70392651f,
+   1.01741435f, -1.06118480f,
+  -0.02095602f, -1.09303131f
+};
+
+namespace {
+struct AtlasTF1Store {
+  std::unique_ptr<TFile> file;
+  TF1* angle_lep[4]    = {nullptr,nullptr,nullptr,nullptr};
+  TF1* angle_1p0n[4]   = {nullptr,nullptr,nullptr,nullptr};
+  TF1* angle_3p0n[4]   = {nullptr,nullptr,nullptr,nullptr};
+  TF1* ratio_lep       = nullptr;
+  TF1* ratio_lead_1p0n = nullptr;
+  TF1* ratio_sub_1p0n  = nullptr;
+  TF1* ratio_lead_3p0n = nullptr;
+  TF1* ratio_sub_3p0n  = nullptr;
+};
+
+TF1* get_tf1(TFile* f, const char* path) {
+  if (!f) return nullptr;
+  TObject* obj = f->Get(path);
+  return dynamic_cast<TF1*>(obj);
+}
+
+AtlasTF1Store& atlas_tf1_store() {
+  static AtlasTF1Store store;
+  static std::once_flag flag;
+  std::call_once(flag, [&]() {
+    const std::string calib_path = "MMC/MMC_params_v1_fixed.root";
+    store.file.reset(TFile::Open(calib_path.c_str(), "READ"));
+    if (!store.file || store.file->IsZombie()) {
+      std::cerr << "[atlas_tf1] Failed to open calibration file: " << calib_path << std::endl;
+      store.file.reset();
+      return;
+    }
+    // Angle params (pT-dependent) for leptonic and hadronic (1p0n, 3p0n)
+    const char* angle_lep_paths[4]  = {
+      "MMC2019MC16/lep/tauNuAngle3d/pTdep-par0",
+      "MMC2019MC16/lep/tauNuAngle3d/pTdep-par1",
+      "MMC2019MC16/lep/tauNuAngle3d/pTdep-par2",
+      "MMC2019MC16/lep/tauNuAngle3d/pTdep-par3"
+    };
+    const char* angle_1p0n_paths[4] = {
+      "MMC2019MC16/had/tauNuAngle3d-1p0n/pTdep-par0",
+      "MMC2019MC16/had/tauNuAngle3d-1p0n/pTdep-par1",
+      "MMC2019MC16/had/tauNuAngle3d-1p0n/pTdep-par2",
+      "MMC2019MC16/had/tauNuAngle3d-1p0n/pTdep-par3"
+    };
+    const char* angle_3p0n_paths[4] = {
+      "MMC2019MC16/had/tauNuAngle3d-3p0n/pTdep-par0",
+      "MMC2019MC16/had/tauNuAngle3d-3p0n/pTdep-par1",
+      "MMC2019MC16/had/tauNuAngle3d-3p0n/pTdep-par2",
+      "MMC2019MC16/had/tauNuAngle3d-3p0n/pTdep-par3"
+    };
+    for (int i=0;i<4;++i) {
+      store.angle_lep[i]  = get_tf1(store.file.get(), angle_lep_paths[i]);
+      store.angle_1p0n[i] = get_tf1(store.file.get(), angle_1p0n_paths[i]);
+      store.angle_3p0n[i] = get_tf1(store.file.get(), angle_3p0n_paths[i]);
+    }
+
+    // Ratio TF1s (direct fit) for lead/sublead hadronic and leptonic
+    store.ratio_lep       = get_tf1(store.file.get(), "MMC2019MC16/lep/nuTauRatio/fit");
+    store.ratio_lead_1p0n = get_tf1(store.file.get(), "MMC2019MC16/had/nuTauRatioLead-1p0n/fit");
+    store.ratio_sub_1p0n  = get_tf1(store.file.get(), "MMC2019MC16/had/nuTauRatioSublead-1p0n/fit");
+    store.ratio_lead_3p0n = get_tf1(store.file.get(), "MMC2019MC16/had/nuTauRatioLead-3p0n/fit");
+    store.ratio_sub_3p0n  = get_tf1(store.file.get(), "MMC2019MC16/had/nuTauRatioSublead-3p0n/fit");
+  });
+  return store;
+}
+
+float atlas_angle_weight_tf1(float pt_vis, float theta, bool isLep, int nprong) {
+  const auto& s = atlas_tf1_store();
+  TF1* pars[4] = {nullptr,nullptr,nullptr,nullptr};
+  if (isLep) {
+    std::copy(std::begin(s.angle_lep), std::end(s.angle_lep), pars);
+  } else if (nprong <= 2) {
+    std::copy(std::begin(s.angle_1p0n), std::end(s.angle_1p0n), pars);
+  } else {
+    std::copy(std::begin(s.angle_3p0n), std::end(s.angle_3p0n), pars);
+  }
+  if (!pars[0] || !pars[1] || !pars[2] || !pars[3]) return 0.f;
+  const double p0 = pars[0]->Eval(pt_vis);
+  const double p1 = pars[1]->Eval(pt_vis);
+  const double p2 = pars[2]->Eval(pt_vis);
+  const double p3 = pars[3]->Eval(pt_vis);
+  const double arg = (theta + p3) / std::max(p1, 1e-6);
+  const double val = p0 * std::exp(-p2 * std::pow(std::log(arg), 2.0));
+  return static_cast<float>(std::max(0.0, val));
+}
+
+float atlas_ratio_weight_tf1(float ratio, bool isLep, int nprong, bool isLead) {
+  const auto& s = atlas_tf1_store();
+  TF1* f = nullptr;
+  if (isLep) {
+    f = s.ratio_lep;
+  } else if (nprong <= 2) {
+    f = isLead ? s.ratio_lead_1p0n : s.ratio_sub_1p0n;
+  } else {
+    f = isLead ? s.ratio_lead_3p0n : s.ratio_sub_3p0n;
+  }
+  if (!f) return 0.f;
+  const double val = f->Eval(ratio);
+  return static_cast<float>(std::max(0.0, val));
+}
+} // namespace
+
+std::array<float,5> AnalysisFCChh::atlas_tf1_weights(
+  const TLorentzVector& tau1_vis,
+  const TLorentzVector& nu1,
+  bool isLep1,
+  int n_charged_tracks_1,
+  bool isLead1,
+  const TLorentzVector& tau2_vis,
+  const TLorentzVector& nu2,
+  bool isLep2,
+  int n_charged_tracks_2,
+  bool isLead2
+) {
+  const float theta1 = static_cast<float>(tau1_vis.Vect().Angle(nu1.Vect()));
+  const float theta2 = static_cast<float>(tau2_vis.Vect().Angle(nu2.Vect()));
+  const float pt1    = static_cast<float>(tau1_vis.Pt());
+  const float pt2    = static_cast<float>(tau2_vis.Pt());
+  const float R1     = (tau1_vis.P() > 0.0) ? static_cast<float>(nu1.P() / tau1_vis.P()) : 0.f;
+  const float R2     = (tau2_vis.P() > 0.0) ? static_cast<float>(nu2.P() / tau2_vis.P()) : 0.f;
+
+  const float w_ang1 = atlas_angle_weight_tf1(pt1, theta1, isLep1, n_charged_tracks_1);
+  const float w_ang2 = atlas_angle_weight_tf1(pt2, theta2, isLep2, n_charged_tracks_2);
+  const float w_rat1 = atlas_ratio_weight_tf1(R1, isLep1, n_charged_tracks_1, isLead1);
+  const float w_rat2 = atlas_ratio_weight_tf1(R2, isLep2, n_charged_tracks_2, isLead2);
+
+  const float w_event = w_ang1 * w_ang2 * w_rat1 * w_rat2;
+  return {w_event, w_ang1, w_ang2, w_rat1, w_rat2};
+}
+
+
 
 inline double lognormal_cdf(double theta, double mu_v, double sig_v, double c_v) {
   const double x = theta + c_v;
