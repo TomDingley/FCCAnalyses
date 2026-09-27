@@ -115,3 +115,6 @@ benchmark*json
 # Graphviz graphs
 *.dot
 *.png
+
+# HHH jet-resolution calibration
+!data/jet_response_maps.root
