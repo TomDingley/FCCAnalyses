@@ -562,6 +562,18 @@ ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> get_btagged_not_tau_tagge
   int tauIndex     // bit for the chosen tau WP, e.g. 1 for "medium"
 );
 
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> get_untagged_jets_exclusive(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& jets,
+  const ROOT::VecOps::RVec<edm4hep::ParticleIDData>& jets_HF_tags,
+  const ROOT::VecOps::RVec<podio::ObjectID>& jets_HF_tags_indices,
+  const ROOT::VecOps::RVec<float>& jets_HF_tag_values,
+  const ROOT::VecOps::RVec<edm4hep::ParticleIDData>& jets_tau_tags,
+  const ROOT::VecOps::RVec<podio::ObjectID>& jets_tau_tags_indices,
+  const ROOT::VecOps::RVec<float>& jets_tau_tag_values,
+  int btagIndex,
+  int tauIndex
+);
+
 ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> sel_by_iso_fail(
     const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& parts,
     const ROOT::VecOps::RVec<float>& isoVar,

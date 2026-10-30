@@ -72,6 +72,20 @@ ROOT::VecOps::RVec<edm4hep::MCParticleData>  sel_pt::operator() (ROOT::VecOps::R
   return result;
 }
 
+sel_eta::sel_eta(float arg_max_eta) : m_max_eta(arg_max_eta) {};
+ROOT::VecOps::RVec<edm4hep::MCParticleData> sel_eta::operator()(ROOT::VecOps::RVec<edm4hep::MCParticleData> in) {
+  ROOT::VecOps::RVec<edm4hep::MCParticleData> result;
+  result.reserve(in.size());
+  for (const auto& p : in) {
+    TLorentzVector lv;
+    lv.SetXYZM(p.momentum.x, p.momentum.y, p.momentum.z, p.mass);
+    if (std::abs(lv.Eta()) < m_max_eta) {
+      result.emplace_back(p);
+    }
+  }
+  return result;
+}
+
 
 filter_pdgID::filter_pdgID(int arg_pdgid, bool arg_abs){m_pdgid = arg_pdgid; m_abs = arg_abs;};
 bool  filter_pdgID::operator() (ROOT::VecOps::RVec<edm4hep::MCParticleData> in) {

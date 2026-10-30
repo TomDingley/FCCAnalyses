@@ -37,6 +37,13 @@ namespace MCParticle{
     ROOT::VecOps::RVec<edm4hep::MCParticleData>  operator() (ROOT::VecOps::RVec<edm4hep::MCParticleData> in);
   };
 
+  /// Select MCParticles with absolute pseudorapidity below a maximum value.
+  struct sel_eta {
+    sel_eta(float arg_max_eta);
+    float m_max_eta = 4;
+    ROOT::VecOps::RVec<edm4hep::MCParticleData> operator()(ROOT::VecOps::RVec<edm4hep::MCParticleData> in);
+  };
+
   /// select MCParticles with their status
   struct sel_genStatus {
     sel_genStatus(int arg_status);

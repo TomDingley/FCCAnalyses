@@ -69,16 +69,20 @@ class Analysis():
                 # event-based information
                 .Define("weight",  "EventHeader.weight[0]")
                 
+                # Upstream Delphes includes the nominal weight at index 0; older files do not.
+                .Define("hhh_weight_offset", "_EventHeader_weights.size() == 9 ? 0 : "
+                                             "_EventHeader_weights.size() == 10 ? 1 : "
+                                             "throw std::runtime_error(\"Expected 9 or 10 HHH weights\")")
                 # define 9 separate weights for the k3k4 scanning
-                .Define("weight_k3m1_k4m1",     "_EventHeader_weights[0]")
-                .Define("weight_k30_k4m2",      "_EventHeader_weights[1]")
-                .Define("weight_k3m2_k40",      "_EventHeader_weights[2]")
-                .Define("weight_k30_k4m1",      "_EventHeader_weights[3]")
-                .Define("weight_k3m1_k40",      "_EventHeader_weights[4]")
-                .Define("weight_k3m2_k4m1",     "_EventHeader_weights[5]")
-                .Define("weight_k3m1_k4m2",     "_EventHeader_weights[6]")
-                .Define("weight_k3m0p5_k4m1",   "_EventHeader_weights[7]")
-                .Define("weight_k3m1p5_k4m1",   "_EventHeader_weights[8]")
+                .Define("weight_k3m1_k4m1",     "_EventHeader_weights.at(hhh_weight_offset + 0)")
+                .Define("weight_k30_k4m2",      "_EventHeader_weights.at(hhh_weight_offset + 1)")
+                .Define("weight_k3m2_k40",      "_EventHeader_weights.at(hhh_weight_offset + 2)")
+                .Define("weight_k30_k4m1",      "_EventHeader_weights.at(hhh_weight_offset + 3)")
+                .Define("weight_k3m1_k40",      "_EventHeader_weights.at(hhh_weight_offset + 4)")
+                .Define("weight_k3m2_k4m1",     "_EventHeader_weights.at(hhh_weight_offset + 5)")
+                .Define("weight_k3m1_k4m2",     "_EventHeader_weights.at(hhh_weight_offset + 6)")
+                .Define("weight_k3m0p5_k4m1",   "_EventHeader_weights.at(hhh_weight_offset + 7)")
+                .Define("weight_k3m1p5_k4m1",   "_EventHeader_weights.at(hhh_weight_offset + 8)")
                 
                 
                 # first define all truth particles we'll use
@@ -351,10 +355,10 @@ class Analysis():
                 .Define("sorted_sel_eta_b_med",  "AnalysisFCChh::SortParticleCollection(sel_eta_b_med)") #sort by pT
                 .Define("pT_bs", "FCCAnalyses::ReconstructedParticle::get_pt(sorted_sel_eta_b_med)")
                 # leading four b-jets (used in Loose Preselection)
-                .Define("pT_b1", "pT_bs[0]")
-                .Define("pT_b2", "pT_bs[1]")
-                .Define("pT_b3", "pT_bs[2]")
-                .Define("pT_b4", "pT_bs[3]")
+                .Define("pT_b1", "pT_bs.size() > 0 ? pT_bs[0] : std::numeric_limits<float>::quiet_NaN()")
+                .Define("pT_b2", "pT_bs.size() > 1 ? pT_bs[1] : std::numeric_limits<float>::quiet_NaN()")
+                .Define("pT_b3", "pT_bs.size() > 2 ? pT_bs[2] : std::numeric_limits<float>::quiet_NaN()")
+                .Define("pT_b4", "pT_bs.size() > 3 ? pT_bs[3] : std::numeric_limits<float>::quiet_NaN()")
 
                 # reco matching bs to bjets
                 .Define("reco_match_b_jets_tauprio", "AnalysisFCChh::find_reco_matches_unique(truth_b_selpt, sel_eta_b_med, dR_match)")
@@ -940,9 +944,14 @@ class Analysis():
 
                 .Define("n_visible_tauhad", "FCCAnalyses::MCParticle::get_n(visible_tauhad)")
 
+                .Define("untagged_jets", "AnalysisFCChh::get_untagged_jets_exclusive(Jet, Jet_HF_tags, _Jet_HF_tags_particle, _Jet_HF_tags_parameters, Jet_tau_tags, _Jet_tau_tags_particle, _Jet_tau_tags_parameters, 1, 2)")
+                .Define("sel_pt_untagged_jets", "FCCAnalyses::ReconstructedParticle::sel_pt(25)(untagged_jets)")
+                .Define("sel_eta_untagged_jets", "FCCAnalyses::ReconstructedParticle::sel_eta(4)(sel_pt_untagged_jets)")
+
                 # pairing b-jet candidates
+                .Define("invalid_higgs_tlv", "TLorentzVector(NAN, NAN, NAN, NAN)")
                 .Define("hres_dR",
-                        "AnalysisFCChh::getHiggsCandidates(sel_eta_b_me, TString(\"dRminmax\"), 125.f, 120.f)")
+                        "AnalysisFCChh::getHiggsCandidates(sel_eta_b_med, TString(\"dRminmax\"), 125.f, 120.f)")
                 .Define("higgs_pairs_dR",      "hres_dR.pairs")
                 
                 # also by mass pairings
@@ -953,14 +962,14 @@ class Analysis():
                 .Define("hres_squaremass",
                         "AnalysisFCChh::getHiggsCandidates(sel_eta_b_med, TString(\"squaremass\"), 125.f, 120.f)")
                 .Define("higgs_pairs_squaremass",      "hres_squaremass.pairs")
-                .Define("m_h1_absmass",          "(AnalysisFCChh::getTLV_reco(higgs_pairs_absmass[0].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_absmass[0].particle_2)).M()")
-                .Define("m_h2_absmass",          "(AnalysisFCChh::getTLV_reco(higgs_pairs_absmass[1].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_absmass[1].particle_2)).M()")
+                .Define("m_h1_absmass",          "higgs_pairs_absmass.size() == 2 ? (AnalysisFCChh::getTLV_reco(higgs_pairs_absmass[0].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_absmass[0].particle_2)).M() : std::numeric_limits<double>::quiet_NaN()")
+                .Define("m_h2_absmass",          "higgs_pairs_absmass.size() == 2 ? (AnalysisFCChh::getTLV_reco(higgs_pairs_absmass[1].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_absmass[1].particle_2)).M() : std::numeric_limits<double>::quiet_NaN()")
 
-                .Define("m_h1_squaremass",          "(AnalysisFCChh::getTLV_reco(higgs_pairs_squaremass[0].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_squaremass[0].particle_2)).M()")
-                .Define("m_h2_squaremass",          "(AnalysisFCChh::getTLV_reco(higgs_pairs_squaremass[1].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_squaremass[1].particle_2)).M()")
+                .Define("m_h1_squaremass",          "higgs_pairs_squaremass.size() == 2 ? (AnalysisFCChh::getTLV_reco(higgs_pairs_squaremass[0].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_squaremass[0].particle_2)).M() : std::numeric_limits<double>::quiet_NaN()")
+                .Define("m_h2_squaremass",          "higgs_pairs_squaremass.size() == 2 ? (AnalysisFCChh::getTLV_reco(higgs_pairs_squaremass[1].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_squaremass[1].particle_2)).M() : std::numeric_limits<double>::quiet_NaN()")
 
-                .Define("h1_tlv_dR",          "AnalysisFCChh::getTLV_reco(higgs_pairs_dR[0].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_dR[0].particle_2)")
-                .Define("h2_tlv_dR",          "AnalysisFCChh::getTLV_reco(higgs_pairs_dR[1].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_dR[1].particle_2)")
+                .Define("h1_tlv_dR",          "higgs_pairs_dR.size() == 2 ? AnalysisFCChh::getTLV_reco(higgs_pairs_dR[0].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_dR[0].particle_2) : invalid_higgs_tlv")
+                .Define("h2_tlv_dR",          "higgs_pairs_dR.size() == 2 ? AnalysisFCChh::getTLV_reco(higgs_pairs_dR[1].particle_1) + AnalysisFCChh::getTLV_reco(higgs_pairs_dR[1].particle_2) : invalid_higgs_tlv")
                 .Define("pT_h1", "h1_tlv_dR.Pt()")
                 .Define("pT_h2", "h2_tlv_dR.Pt()")
        
@@ -968,11 +977,11 @@ class Analysis():
 
                 # now for lephad we have to 
                 .Define("tautau_pairs_unmerged", "AnalysisFCChh::getPairs(sel_eta_tau_med)") #currently gets only leading pT pair, as a RecoParticlePair
-                .Define("charge_tau_1", "FCCAnalyses::ReconstructedParticle::get_charge(sort_sel_eta_tau_med)[0]")
-                .Define("charge_tau_2", "FCCAnalyses::ReconstructedParticle::get_charge(sort_sel_eta_tau_med)[1]")
+                .Define("charge_tau_1", "sort_sel_eta_tau_med.size() > 0 ? sort_sel_eta_tau_med[0].charge : 0.f")
+                .Define("charge_tau_2", "sort_sel_eta_tau_med.size() > 1 ? sort_sel_eta_tau_med[1].charge : 0.f")
                 
-                .Define("tau_1_tlv", "AnalysisFCChh::getTLV_reco(sort_sel_eta_tau_med[0])")
-                .Define("tau_2_tlv", "AnalysisFCChh::getTLV_reco(sort_sel_eta_tau_med[1])")
+                .Define("tau_1_tlv", "sort_sel_eta_tau_med.size() > 0 ? AnalysisFCChh::getTLV_reco(sort_sel_eta_tau_med[0]) : TLorentzVector()")
+                .Define("tau_2_tlv", "sort_sel_eta_tau_med.size() > 1 ? AnalysisFCChh::getTLV_reco(sort_sel_eta_tau_med[1]) : TLorentzVector()")
                 
                 # define the visible masses of each too, to check how poorly calibrated they are
                 .Define("m_vis_tau1_reco", "tau_1_tlv.M()")
@@ -985,14 +994,14 @@ class Analysis():
                 .Define("mu1_pt",  "FCCAnalyses::ReconstructedParticle::get_pt(sort_sel_mu)[0]")
                 .Define("mu1_eta",  "FCCAnalyses::ReconstructedParticle::get_eta(sort_sel_mu)[0]")
                 .Define("mu1_phi",  "FCCAnalyses::ReconstructedParticle::get_phi(sort_sel_mu)[0]")
-                .Define("mu1_charge",  "FCCAnalyses::ReconstructedParticle::get_charge(sort_sel_mu)[0]")
+                .Define("mu1_charge",  "sort_sel_mu.empty() ? 0.f : sort_sel_mu[0].charge")
 
                 # using the 0.2 isolation working point
                 .Define("el1_e",  "FCCAnalyses::ReconstructedParticle::get_e(sel_el_0p2)[0]")
                 .Define("el1_pt",  "FCCAnalyses::ReconstructedParticle::get_pt(sel_el_0p2)[0]")
                 .Define("el1_eta",  "FCCAnalyses::ReconstructedParticle::get_eta(sel_el_0p2)[0]")
                 .Define("el1_phi",  "FCCAnalyses::ReconstructedParticle::get_phi(sel_el_0p2)[0]")
-                .Define("el1_charge",  "FCCAnalyses::ReconstructedParticle::get_charge(sel_el_0p2)[0]")
+                .Define("el1_charge",  "sel_el_0p2.empty() ? 0.f : sel_el_0p2[0].charge")
                 
                 # OS pairs
                 # opposite sign pairs
@@ -1102,18 +1111,18 @@ class Analysis():
                 .Define("dR_tautau", "ROOT::Math::VectorUtil::DeltaR(tau_1_tlv_LH, tau_2_tlv_LH)")
 
                 # distance between b-jets, define b-jets
-                .Define("h1_p1_tlv", "AnalysisFCChh::getTLV_reco(higgs_pairs_dR[0].particle_1)")
-                .Define("h1_p2_tlv", "AnalysisFCChh::getTLV_reco(higgs_pairs_dR[0].particle_2)")
-                .Define("h2_p1_tlv", "AnalysisFCChh::getTLV_reco(higgs_pairs_dR[1].particle_1)")
-                .Define("h2_p2_tlv", "AnalysisFCChh::getTLV_reco(higgs_pairs_dR[1].particle_2)")
+                .Define("h1_p1_tlv", "higgs_pairs_dR.size() == 2 ? AnalysisFCChh::getTLV_reco(higgs_pairs_dR[0].particle_1) : invalid_higgs_tlv")
+                .Define("h1_p2_tlv", "higgs_pairs_dR.size() == 2 ? AnalysisFCChh::getTLV_reco(higgs_pairs_dR[0].particle_2) : invalid_higgs_tlv")
+                .Define("h2_p1_tlv", "higgs_pairs_dR.size() == 2 ? AnalysisFCChh::getTLV_reco(higgs_pairs_dR[1].particle_1) : invalid_higgs_tlv")
+                .Define("h2_p2_tlv", "higgs_pairs_dR.size() == 2 ? AnalysisFCChh::getTLV_reco(higgs_pairs_dR[1].particle_2) : invalid_higgs_tlv")
                 
                 # check if higgs_pairs_dR[0].particle_1 and higgs_pairs_dR[0].particle_1 match the jets we reco-matched earlier
                 # MC particles truth_b_1 and truth_b_2
                 # make vector of decay products
-                .Define("reco_h1_products", "ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
-                        "higgs_pairs_dR[0].particle_1, higgs_pairs_dR[0].particle_2}")
-                .Define("reco_h2_products", "ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
-                        "higgs_pairs_dR[1].particle_1, higgs_pairs_dR[1].particle_2}")
+                .Define("reco_h1_products", "higgs_pairs_dR.size() == 2 ? ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
+                        "higgs_pairs_dR[0].particle_1, higgs_pairs_dR[0].particle_2} : ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{}")
+                .Define("reco_h2_products", "higgs_pairs_dR.size() == 2 ? ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
+                        "higgs_pairs_dR[1].particle_1, higgs_pairs_dR[1].particle_2} : ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{}")
                 
                 .Define("reco_matched_h1", "AnalysisFCChh::find_reco_matches_unique(truth_h1_products, reco_h1_products, 0.3)")
                 .Define("reco_matched_h2", "AnalysisFCChh::find_reco_matches_unique(truth_h2_products, reco_h2_products, 0.3)")
@@ -1121,10 +1130,10 @@ class Analysis():
                 .Define("n_reco_matched_h2", "FCCAnalyses::ReconstructedParticle::get_n(reco_matched_h2)")
                 
                 
-                .Define("reco_h1_products_squaremass", "ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
-                        "higgs_pairs_squaremass[0].particle_1, higgs_pairs_squaremass[0].particle_2}")
-                .Define("reco_h2_products_squaremass", "ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
-                        "higgs_pairs_squaremass[1].particle_1, higgs_pairs_squaremass[1].particle_2}")
+                .Define("reco_h1_products_squaremass", "higgs_pairs_squaremass.size() == 2 ? ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
+                        "higgs_pairs_squaremass[0].particle_1, higgs_pairs_squaremass[0].particle_2} : ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{}")
+                .Define("reco_h2_products_squaremass", "higgs_pairs_squaremass.size() == 2 ? ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
+                        "higgs_pairs_squaremass[1].particle_1, higgs_pairs_squaremass[1].particle_2} : ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{}")
                 
                 .Define("reco_matched_h1_squaremass", "AnalysisFCChh::find_reco_matches_unique(truth_h1_products, reco_h1_products_squaremass, 0.3)")
                 .Define("reco_matched_h2_squaremass", "AnalysisFCChh::find_reco_matches_unique(truth_h2_products, reco_h2_products_squaremass, 0.3)")
@@ -1133,10 +1142,10 @@ class Analysis():
                 
                 
                 
-                .Define("reco_h1_products_absmass", "ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
-                        "higgs_pairs_absmass[0].particle_1, higgs_pairs_absmass[0].particle_2}")
-                .Define("reco_h2_products_absmass", "ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
-                        "higgs_pairs_absmass[1].particle_1, higgs_pairs_absmass[1].particle_2}")
+                .Define("reco_h1_products_absmass", "higgs_pairs_absmass.size() == 2 ? ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
+                        "higgs_pairs_absmass[0].particle_1, higgs_pairs_absmass[0].particle_2} : ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{}")
+                .Define("reco_h2_products_absmass", "higgs_pairs_absmass.size() == 2 ? ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{ "
+                        "higgs_pairs_absmass[1].particle_1, higgs_pairs_absmass[1].particle_2} : ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>{}")
                 
                 .Define("reco_matched_h1_absmass", "AnalysisFCChh::find_reco_matches_unique(truth_h1_products, reco_h1_products_absmass, 0.3)")
                 .Define("reco_matched_h2_absmass", "AnalysisFCChh::find_reco_matches_unique(truth_h2_products, reco_h2_products_absmass, 0.3)")
@@ -1146,11 +1155,11 @@ class Analysis():
                 # separation of Higgs decay products
                 .Define("dEta_h1", "h1_p1_tlv.Eta() - h1_p2_tlv.Eta()") # should in principle
                 .Define("dPhi_h1", "ROOT::Math::VectorUtil::DeltaPhi(h1_p1_tlv, h1_p2_tlv)")
-                .Define("dR_h1",   "ROOT::Math::VectorUtil::DeltaR(h1_p1_tlv, h1_p2_tlv)")
+                .Define("dR_h1",   "higgs_pairs_dR.size() == 2 ? ROOT::Math::VectorUtil::DeltaR(h1_p1_tlv, h1_p2_tlv) : std::numeric_limits<double>::quiet_NaN()")
 
                 .Define("dEta_h2", "h2_p1_tlv.Eta() - h2_p2_tlv.Eta()")
                 .Define("dPhi_h2", "ROOT::Math::VectorUtil::DeltaPhi(h2_p1_tlv, h2_p2_tlv)")
-                .Define("dR_h2",   "ROOT::Math::VectorUtil::DeltaR(h2_p1_tlv, h2_p2_tlv)")
+                .Define("dR_h2",   "higgs_pairs_dR.size() == 2 ? ROOT::Math::VectorUtil::DeltaR(h2_p1_tlv, h2_p2_tlv) : std::numeric_limits<double>::quiet_NaN()")
                 
                 # angular distance between this higgs and the MET
                 .Define("MET_tlv", "AnalysisFCChh::getTLV_reco(MissingET[0])")

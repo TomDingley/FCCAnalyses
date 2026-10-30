@@ -3849,6 +3849,43 @@ AnalysisFCChh::find_reco_matches_unique(
   return out;
 }
 
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
+AnalysisFCChh::get_untagged_jets_exclusive(
+  const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>& jets,
+  const ROOT::VecOps::RVec<edm4hep::ParticleIDData>& jets_HF_tags,
+  const ROOT::VecOps::RVec<podio::ObjectID>& jets_HF_tags_indices,
+  const ROOT::VecOps::RVec<float>& jets_HF_tag_values,
+  const ROOT::VecOps::RVec<edm4hep::ParticleIDData>& jets_tau_tags,
+  const ROOT::VecOps::RVec<podio::ObjectID>& jets_tau_tags_indices,
+  const ROOT::VecOps::RVec<float>& jets_tau_tag_values,
+  int btagIndex,
+  int tauIndex)
+{
+  const size_t n_jets = jets.size();
+  std::vector<unsigned char> tagged(n_jets, 0);
+  const auto mark_tagged = [&](const auto& tags, const auto& indices,
+                               const auto& values, int bit) {
+    if (bit < 0) return;
+    const unsigned mask = 1u << bit;
+    for (size_t i = 0; i < std::min(tags.size(), indices.size()); ++i) {
+      const int jet_index = indices[i].index;
+      const int value_index = tags[i].parameters_begin;
+      if (jet_index < 0 || static_cast<size_t>(jet_index) >= n_jets ||
+          value_index < 0 || static_cast<size_t>(value_index) >= values.size()) continue;
+      const unsigned bits = static_cast<unsigned>(values[value_index]);
+      if (bits & mask) tagged[static_cast<size_t>(jet_index)] = 1;
+    }
+  };
+  mark_tagged(jets_HF_tags, jets_HF_tags_indices, jets_HF_tag_values, btagIndex);
+  mark_tagged(jets_tau_tags, jets_tau_tags_indices, jets_tau_tag_values, tauIndex);
+
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> out;
+  for (size_t i = 0; i < n_jets; ++i) {
+    if (!tagged[i]) out.push_back(jets[i]);
+  }
+  return out;
+}
+
 // Return b-tagged jets that are NOT tau-tagged
 ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
 AnalysisFCChh::get_btagged_not_tau_tagged(
@@ -4804,6 +4841,11 @@ AnalysisFCChh::HiggsCandidateResult AnalysisFCChh::getHiggsCandidates(
     getTLV_reco(bjets[2]),
     getTLV_reco(bjets[3])
   }};
+  for (const auto& jet : jet_p4) {
+    if (!(jet.Pt() > 0.0) || !std::isfinite(jet.Px()) ||
+        !std::isfinite(jet.Py()) || !std::isfinite(jet.Pz()) ||
+        !std::isfinite(jet.E())) return out;
+  }
 
   struct Pairing {
     size_t jet1;
@@ -6501,6 +6543,18 @@ MMCSolutionsAndWeights AnalysisFCChh::solve_ditau_MMC_METScan_para_perp_vispTang
   bool diagnostic,
   int diag_topN
 ) {
+  const auto valid_tau = [](const TLorentzVector& tau) {
+    return tau.Pt() > 0.0 && std::isfinite(tau.Px()) &&
+           std::isfinite(tau.Py()) && std::isfinite(tau.Pz()) &&
+           std::isfinite(tau.E());
+  };
+  if (!valid_tau(tau1) || !valid_tau(tau2) ||
+      !std::isfinite(MET_x) || !std::isfinite(MET_y) ||
+      !(metres_x > 0.f) || !(metres_y > 0.f) ||
+      !std::isfinite(metres_x) || !std::isfinite(metres_y) ||
+      nsteps <= 0 || nMETsteps <= 1 || nMass_steps <= 0) {
+    return {};
+  }
   std::vector<std::array<float,8>> weight_components;
   auto solutions = ::solve_ditau_MMC_METScan_para_perp_vispTAngleCalibration(
     tau1, tau2, isLep1, isLep2, n_charged_tracks_1, n_charged_tracks_2,
@@ -6540,7 +6594,7 @@ double AnalysisFCChh::weighted_mode_from_mw(
     bool toWeight     
 )
 {
-  if (nbins <= 0 || !(xmax > xmin)) 
+  if (mw_log.empty() || nbins <= 0 || !(xmax > xmin))
       return std::numeric_limits<double>::quiet_NaN();
 
   double max_logw = -std::numeric_limits<double>::infinity();
@@ -6569,6 +6623,8 @@ double AnalysisFCChh::weighted_mode_from_mw(
 
     h.Fill(m, w);
   }
+
+  if (h.GetEntries() == 0) return std::numeric_limits<double>::quiet_NaN();
 
   const int ibin_max = h.GetMaximumBin();
   if (ibin_max <= 0) return std::numeric_limits<double>::quiet_NaN();
