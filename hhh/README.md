@@ -7,7 +7,7 @@ All a new user needs to do is source the scratch setup script provided, `source 
 
 ### A first test
 
-To run a test job of 10000 events, run `fccanalysis run hhh_ntuples.py --test`, which runs a test job on the file configured within the ntuple code <insert link here>.
+To run a test job of 10000 events, run `fccanalysis run HHH_ntuples.py --test`, which runs a test job on the file configured within the ntuple code <insert link here>.
 
 A set of plots has been included within `test/`, which can be reproduced by running `python test_HHH.py`.
 
