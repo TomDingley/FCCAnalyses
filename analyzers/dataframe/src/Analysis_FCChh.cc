@@ -38,6 +38,108 @@ bool hasBHadronDaughter(const edm4hep::MCParticleData& p,
   return false;
 }
 
+// bbaa quartic analysis
+float AnalysisFCChh::collinsSoper(
+  TLorentzVector &y1,
+  TLorentzVector &y2
+) {
+  float cs;
+  float inv_sqrt2 = 1/std::sqrt(2);
+
+  // prep inputs for CS-function
+  float p1_u = (y1.E() + y1.Pz()) * inv_sqrt2;
+  float p1_d = (y1.E() - y1.Pz()) * inv_sqrt2;
+
+  float p2_u = (y2.E() + y2.Pz()) * inv_sqrt2;
+  float p2_d = (y2.E() - y2.Pz()) * inv_sqrt2;
+
+  float myy = (y1+y2).M();
+  float pTyy = (y1+y2).Pt();
+
+  cs = 2*(p1_u * p2_d - p1_d * p2_u) / (myy * std::sqrt(myy*myy + pTyy * pTyy));
+
+  return cs;
+}
+
+// angle of diphoton with beam in di-Higgs rest frame
+float AnalysisFCChh::cosThetaStar_yy_in_HH(
+    const TLorentzVector& y1,
+    const TLorentzVector& y2,
+    const TLorentzVector& b1,
+    const TLorentzVector& b2
+) {
+
+  // construct individual higgs' + di-Higgs TLVs
+  const TLorentzVector Hyy = y1 + y2;
+  const TLorentzVector Hbb = b1 + b2;
+  const TLorentzVector HH  = Hyy + Hbb;
+
+  if (HH.E() <= 0.) return 0.f;
+  if (Hyy.Vect().Mag2() == 0.) return 0.f;
+
+  // Boost into HH rest frame
+  const TVector3 beta = -HH.BoostVector();
+
+  // Beam 4-vectors (massless proxies along +-z); normalisation irrelevant
+  TLorentzVector beam1(0., 0., +1., 1.);
+  TLorentzVector beam2(0., 0., -1., 1.);
+  beam1.Boost(beta);
+  beam2.Boost(beta);
+
+  // Collins–Soper beam axis in HH frame
+  TVector3 zCS = beam1.Vect().Unit() - beam2.Vect().Unit();
+  if (zCS.Mag2() == 0.) return 0.f;
+  zCS = zCS.Unit();
+
+  // Diphoton system in HH frame
+  TLorentzVector Hyy_HH = Hyy;
+  Hyy_HH.Boost(beta);
+
+  const TVector3 pHat = Hyy_HH.Vect().Unit();
+  double cosTheta = pHat.Dot(zCS);
+
+  // numerical safety
+  if (cosTheta >  1.0) cosTheta =  1.0;
+  if (cosTheta < -1.0) cosTheta = -1.0;
+
+  // pp symmetric: often use |cosθ*|
+  return static_cast<float>(std::abs(cosTheta));
+}
+
+// min, max dR (y,j)
+// min, max dR (y,j) over {y1,y2} × {b1,b2}
+ROOT::VecOps::RVec<float> AnalysisFCChh::minmax_dr(
+    const TLorentzVector& y1,
+    const TLorentzVector& y2,
+    const TLorentzVector& b1,
+    const TLorentzVector& b2
+) {
+  float dR_min = std::numeric_limits<float>::infinity();
+  float dR_max = 0.f;
+
+  // more aesthetically clean version possible, but this will do:
+  const float dR_y1b1 = y1.DeltaR(b1);
+  const float dR_y1b2 = y1.DeltaR(b2);
+  const float dR_y2b1 = y2.DeltaR(b1);
+  const float dR_y2b2 = y2.DeltaR(b2);
+
+  dR_min = std::min(dR_min, dR_y1b1);
+  dR_min = std::min(dR_min, dR_y1b2);
+  dR_min = std::min(dR_min, dR_y2b1);
+  dR_min = std::min(dR_min, dR_y2b2);
+
+  dR_max = std::max(dR_max, dR_y1b1);
+  dR_max = std::max(dR_max, dR_y1b2);
+  dR_max = std::max(dR_max, dR_y2b1);
+  dR_max = std::max(dR_max, dR_y2b2);
+
+  ROOT::VecOps::RVec<float> out(2);
+  out[0] = dR_min;
+  out[1] = dR_max;
+  return out;
+}
+
+
 bool AnalysisFCChh::isElectron(edm4hep::MCParticleData truth_part) {
   auto pdg_id = truth_part.PDG;
   // std::cout << "pdg id of truth part is" << pdg_id << std::endl;
@@ -3112,18 +3214,18 @@ ROOT::VecOps::RVec<float> AnalysisFCChh::get_IP_delphes(
     // loop over all other parts and sum up pTs if they are within the dR cone
     // and above min pT
     for (auto &reco_part : reco_parts_all) {
-
-      // check type of particle first:
-      //  std::cout << "PDG ID of particle:" << reco_part.m_particleIDUsed <<
-      //  std::endl;
-
-      // exclude electrons and muons
-
       TLorentzVector tlv_reco_part = getTLV_reco(reco_part);
+      float reco_pT = tlv_reco_part.Pt();
+      float dR = tlv_test_part.DeltaR(tlv_reco_part);
 
-      if (tlv_reco_part.Pt() > pT_min &&
-          tlv_test_part.DeltaR(tlv_reco_part) < dR_min) {
-        sum_pT += tlv_reco_part.Pt();
+      // Preserve the original equal-pT veto, including the test particle itself.
+      if (reco_pT == pT_test_part) {
+        tlv_reco_part.Clear();
+        continue;
+      }
+
+      if (reco_pT > pT_min && dR < dR_min) {
+        sum_pT += reco_pT;
       }
 
       tlv_reco_part.Clear();

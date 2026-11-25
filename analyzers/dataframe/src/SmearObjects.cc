@@ -2,6 +2,8 @@
 
 // std
 #include <iostream>
+#include <numeric>
+#include "TRandom3.h"
 
 // ROOT
 #include "TDecompChol.h"
@@ -496,11 +498,17 @@ SmearedReconstructedParticle::SmearedReconstructedParticle(float scale,
   // 0 (charged hadrons), -1 (all)
   m_type = type;
 
-  // 0: energy, 1: momentum
+  // 0: energy, 1: momentum, 2: eta and phi
   m_mode = mode;
 
   // debug flag
   m_debug = debug;
+}
+
+SmearedReconstructedParticle::SmearedReconstructedParticle(
+    float scale, int type, int mode, int event_number, bool debug)
+    : SmearedReconstructedParticle(scale, type, mode, debug) {
+  m_event_number = event_number;
 }
 
 ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
@@ -509,13 +517,25 @@ SmearedReconstructedParticle::operator()(
         &allRecoParticles,
     const ROOT::VecOps::RVec<int> &RP2MC_indices,
     const ROOT::VecOps::RVec<edm4hep::MCParticleData> &mcParticles) {
+  ROOT::VecOps::RVec<int> indices(allRecoParticles.size());
+  std::iota(indices.begin(), indices.end(), 0);
+  return (*this)(allRecoParticles, RP2MC_indices, mcParticles, indices);
+}
+
+ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
+SmearedReconstructedParticle::operator()(
+    const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
+        &allRecoParticles,
+    const ROOT::VecOps::RVec<int> &RP2MC_indices,
+    const ROOT::VecOps::RVec<edm4hep::MCParticleData> &mcParticles,
+    const ROOT::VecOps::RVec<int> &recoIndices) {
 
   // returns a vector of ReconstructedParticleData
   // The method retrieve the MC particle that is associated to the
   // ReconstructedParticle, and creates a new ReconstructedParticle with smeared
   // parameters.
 
-  int npart = allRecoParticles.size();
+  int npart = recoIndices.size();
 
   ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> result;
   result.resize(npart);
@@ -524,7 +544,8 @@ SmearedReconstructedParticle::operator()(
 
   for (int ipart = 0; ipart < npart; ipart++) {
 
-    edm4hep::ReconstructedParticleData reco_part = allRecoParticles[ipart];
+    const int ireco = recoIndices.at(ipart);
+    edm4hep::ReconstructedParticleData reco_part = allRecoParticles.at(ireco);
     edm4hep::ReconstructedParticleData smeared_part = reco_part;
 
 #if edm4hep_VERSION > EDM4HEP_VERSION(0, 10, 5)
@@ -545,7 +566,7 @@ SmearedReconstructedParticle::operator()(
 
     // find the corresponding MC particle
     int MCindex = -1;
-    MCindex = RP2MC_indices[ipart];
+    MCindex = RP2MC_indices.at(ireco);
 
     // smear particle only if MC particle found, else return original particle
     // and if type == requested
@@ -600,6 +621,44 @@ SmearedReconstructedParticle::operator()(
 
       }
 
+      // eta and phi resolution mode
+      else if (m_mode == 2) {
+        // take eta and phi from gen particle
+        float gen_eta = gen_p4.Eta();
+        float gen_phi = gen_p4.Phi();
+        float gen_E = gen_p4.E();
+        // create a TRandom object
+        int seed = 1 + static_cast<int>(
+          std::abs(gen_phi) * 1E6 +
+          std::abs(gen_eta) * 1E3 +
+          std::abs(gen_E) * 1E3 +
+          m_event_number);
+
+        TRandom3 rng(seed);
+
+        // define the resolution of the eta and phi as a function of the generated energy
+        // see https://cds.cern.ch/record/2842569/files/CERN-2022-002.pdf?version=1
+        // page 176 and 177
+        float sigma_eta = std::sqrt(std::pow(1.36/std::sqrt(gen_E), 2.) + std::pow(0.10, 2)) * 1E-3;
+        float sigma_phi = std::sqrt(std::pow(3.76/std::sqrt(gen_E), 2.) + std::pow(0.22, 2)) * 1E-3;
+
+        // smear eta and phi
+        float smeared_eta = rng.Gaus(gen_eta, sigma_eta);
+        float smeared_phi = rng.Gaus(gen_phi, sigma_phi);
+
+        // recompute transverse momentum
+        float reco_pT =  reco_p4.E()/TMath::CosH(smeared_eta);
+
+        // rebuild the smeared TLorentzVector for the reco particle
+        smeared_p4.SetPtEtaPhiE(reco_pT, smeared_eta, smeared_phi, reco_p4.E());
+
+        // rebuild the smeared reco particle
+        smeared_part.energy = smeared_p4.E();
+        smeared_part.momentum.x = smeared_p4.Px();
+        smeared_part.momentum.y = smeared_p4.Py();
+        smeared_part.momentum.z = smeared_p4.Pz();
+
+      }
       // return mc truth particle
       else if (m_mode == -1) {
         smeared_part.energy = gen_p4.E();

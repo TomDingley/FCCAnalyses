@@ -254,6 +254,15 @@ float angular_separationBuilder::operator() ( ROOT::VecOps::RVec<edm4hep::Recons
 }
 
 
+ROOT::VecOps::RVec<int> get_idx_clean(ROOT::VecOps::RVec<int> indices) {
+  ROOT::VecOps::RVec<int> result;
+  result.reserve(indices.size());
+  for (int index : indices) {
+    if (index >= 0) result.push_back(index);
+  }
+  return result;
+}
+
 ROOT::VecOps::RVec<float> get_pt(ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> in){
  ROOT::VecOps::RVec<float> result;
  for (size_t i = 0; i < in.size(); ++i) {

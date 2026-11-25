@@ -174,6 +174,28 @@ bool isGluon(edm4hep::MCParticleData truth_part);
 bool isc(edm4hep::MCParticleData truth_part);
 bool iss(edm4hep::MCParticleData truth_part);
 bool isMuon(edm4hep::MCParticleData truth_part);
+// HH -> bb gamma gamma angular observables.
+float collinsSoper(
+  TLorentzVector &y1,
+  TLorentzVector &y2
+);
+
+// in the hh rest frame too
+float cosThetaStar_yy_in_HH(
+    const TLorentzVector& y1,
+    const TLorentzVector& y2,
+    const TLorentzVector& b1,
+    const TLorentzVector& b2
+);
+
+ROOT::VecOps::RVec<float> minmax_dr(
+    const TLorentzVector& y1,
+    const TLorentzVector& y2,
+    const TLorentzVector& b1,
+    const TLorentzVector& b2
+);
+
+
 int checkZDecay(edm4hep::MCParticleData truth_Z,
                 ROOT::VecOps::RVec<podio::ObjectID> daughter_ids,
                 ROOT::VecOps::RVec<edm4hep::MCParticleData> truth_particles);

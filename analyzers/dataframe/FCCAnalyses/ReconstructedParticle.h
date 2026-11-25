@@ -123,6 +123,9 @@ struct recoilBuilder {
   /// return the transverse momenta of the input ReconstructedParticles
   ROOT::VecOps::RVec<float> get_pt(ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> in);
 
+  /// Remove negative object indices before selecting a reconstructed subset.
+  ROOT::VecOps::RVec<int> get_idx_clean(ROOT::VecOps::RVec<int> indices);
+
   /// return the momenta of the input ReconstructedParticles
   ROOT::VecOps::RVec<float> get_p(ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData> in);
 

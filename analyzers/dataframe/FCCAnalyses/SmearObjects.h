@@ -102,13 +102,24 @@ struct SmearedReconstructedParticle {
   float m_scale;
   int m_type;
   int m_mode;
+  int m_event_number = 0;
   SmearedReconstructedParticle(float scale, int type, int mode, bool debug);
+  SmearedReconstructedParticle(float scale, int type, int mode,
+                               int event_number, bool debug);
+
 
   ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
   operator()(const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
                  &allRecoParticles,
              const ROOT::VecOps::RVec<int> &RP2MC_indices,
              const ROOT::VecOps::RVec<edm4hep::MCParticleData> &mcParticles);
+
+  ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
+  operator()(const ROOT::VecOps::RVec<edm4hep::ReconstructedParticleData>
+                 &allRecoParticles,
+             const ROOT::VecOps::RVec<int> &RP2MC_indices,
+             const ROOT::VecOps::RVec<edm4hep::MCParticleData> &mcParticles,
+             const ROOT::VecOps::RVec<int> &recoIndices);
 };
 
 } // namespace FCCAnalyses::SmearObjects
